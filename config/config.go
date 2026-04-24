@@ -19,6 +19,8 @@ type TrainingConfig struct {
 	LearningRate float64 `json:"learning_rate"`
 	BatchSize    int     `json:"batch_size"`
 	Temperature  float64 `json:"temperature"`
+	ContextSize  int     `json:"context_size"` // Tamanho do contexto (n-gramas)
+	TopK         int     `json:"top_k"`        // Top-K sampling
 }
 
 // ServerConfig configurações do servidor HTTP
@@ -37,17 +39,19 @@ type PathsConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Training: TrainingConfig{
-			Epochs:       50,
-			LearningRate: 0.01,
-			BatchSize:    32,
-			Temperature:  0.8,
+			Epochs:       200,
+			LearningRate: 0.005,
+			BatchSize:    64,
+			Temperature:  0.7,
+			ContextSize:  10,
+			TopK:         40,
 		},
 		Server: ServerConfig{
 			Port: ":8080",
 			Host: "localhost",
 		},
 		Paths: PathsConfig{
-			ModelPath: "modelo_treinado.bin",
+			ModelPath: "lmcs-model.bin",
 			InputFile: "livro.txt",
 		},
 	}
@@ -95,6 +99,12 @@ func (c *Config) Validate() error {
 	}
 	if c.Training.Temperature <= 0 || c.Training.Temperature > 2.0 {
 		return fmt.Errorf("temperature deve estar entre 0 e 2")
+	}
+	if c.Training.ContextSize <= 0 || c.Training.ContextSize > 20 {
+		return fmt.Errorf("context_size deve estar entre 1 e 20")
+	}
+	if c.Training.TopK <= 0 || c.Training.TopK > 100 {
+		return fmt.Errorf("top_k deve estar entre 1 e 100")
 	}
 	if c.Server.Port == "" {
 		return fmt.Errorf("port não pode estar vazio")

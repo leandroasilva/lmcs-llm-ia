@@ -14,16 +14,17 @@ import (
 
 // LmcsLLM representa o modelo de linguagem em nível de caractere
 type LmcsLLM struct {
-	Weights  [][]float64
-	Chars    []rune
-	CharToID map[rune]int
-	IDToChar map[int]rune
-	Size     int
-	mu       sync.RWMutex
+	Weights     [][]float64 // Matriz de pesos [vocab_size * context_size, vocab_size]
+	Chars       []rune
+	CharToID    map[rune]int
+	IDToChar    map[int]rune
+	VocabSize   int
+	ContextSize int // Tamanho do contexto (quantos caracteres anteriores olhar)
+	mu          sync.RWMutex
 }
 
 // New cria e inicializa um novo modelo
-func New(text string) *LmcsLLM {
+func New(text string, contextSize int) *LmcsLLM {
 	log.Println("Inicializando novo modelo...")
 
 	uniqueMap := make(map[rune]bool)
@@ -37,10 +38,13 @@ func New(text string) *LmcsLLM {
 	}
 	sort.Slice(chars, func(i, j int) bool { return chars[i] < chars[j] })
 
-	size := len(chars)
+	vocabSize := len(chars)
 	cToID := make(map[rune]int)
 	idToC := make(map[int]rune)
-	weights := make([][]float64, size)
+
+	// Pesos: [vocab_size * context_size, vocab_size]
+	inputSize := vocabSize * contextSize
+	weights := make([][]float64, inputSize)
 
 	// Semente para reproducibilidade
 	rand.Seed(time.Now().UnixNano())
@@ -48,21 +52,28 @@ func New(text string) *LmcsLLM {
 	for i, r := range chars {
 		cToID[r] = i
 		idToC[i] = r
-		weights[i] = make([]float64, size)
+	}
+
+	// Inicializar pesos para cada posição do contexto
+	for i := 0; i < inputSize; i++ {
+		weights[i] = make([]float64, vocabSize)
 		for j := range weights[i] {
-			// Inicialização Xavier simplificada
-			weights[i][j] = (rand.Float64() - 0.5) * 2.0 / float64(size)
+			// Inicialização Xavier
+			weights[i][j] = (rand.Float64() - 0.5) * 2.0 / float64(vocabSize)
 		}
 	}
 
-	log.Printf("Modelo criado com %d caracteres únicos\n", size)
+	log.Printf("Modelo criado: vocab=%d, context=%d, params=%d\n",
+		vocabSize, contextSize, inputSize*vocabSize)
+
 	return &LmcsLLM{
-		Weights:  weights,
-		Chars:    chars,
-		CharToID: cToID,
-		IDToChar: idToC,
-		Size:     size,
-		mu:       sync.RWMutex{},
+		Weights:     weights,
+		Chars:       chars,
+		CharToID:    cToID,
+		IDToChar:    idToC,
+		VocabSize:   vocabSize,
+		ContextSize: contextSize,
+		mu:          sync.RWMutex{},
 	}
 }
 
@@ -80,6 +91,7 @@ func Load(path string) (*LmcsLLM, error) {
 	}
 
 	m.mu = sync.RWMutex{} // Reinicializar mutex
+	log.Printf("Modelo carregado: vocab=%d, context=%d\n", m.VocabSize, m.ContextSize)
 	return &m, nil
 }
 
@@ -98,17 +110,18 @@ func (m *LmcsLLM) Save(path string) error {
 	return nil
 }
 
-// Train treina o modelo com o texto fornecido
+// Train treina o modelo com o texto fornecido usando contexto
 func (m *LmcsLLM) Train(text string, epochs int, lr float64, batchSize int) {
 	runes := []rune(text)
 	n := len(runes)
 
-	if n < 2 {
+	if n < m.ContextSize+1 {
 		log.Println("Texto muito curto para treinamento")
 		return
 	}
 
-	log.Printf("Iniciando treinamento: %d épocas, lr=%.4f, batch=%d\n", epochs, lr, batchSize)
+	log.Printf("Iniciando treinamento: %d épocas, lr=%.4f, batch=%d, context=%d\n",
+		epochs, lr, batchSize, m.ContextSize)
 
 	for e := 1; e <= epochs; e++ {
 		startTime := time.Now()
@@ -116,45 +129,53 @@ func (m *LmcsLLM) Train(text string, epochs int, lr float64, batchSize int) {
 		samples := 0
 
 		// Processar em mini-batches
-		for batchStart := 0; batchStart < n-1; batchStart += batchSize {
+		for batchStart := m.ContextSize; batchStart < n-1; batchStart += batchSize {
 			batchEnd := batchStart + batchSize
 			if batchEnd > n-1 {
 				batchEnd = n - 1
 			}
 
 			// Acumular gradientes para o batch
-			gradients := make([][]float64, m.Size)
+			gradients := make([][]float64, len(m.Weights))
 			for i := range gradients {
-				gradients[i] = make([]float64, m.Size)
+				gradients[i] = make([]float64, m.VocabSize)
 			}
 
 			batchLoss := 0.0
 			batchSamples := 0
 
-			// Processar cada par no batch sequencialmente
+			// Processar cada par no batch
 			for i := batchStart; i < batchEnd; i++ {
-				curr, ok1 := m.CharToID[runes[i]]
-				next, ok2 := m.CharToID[runes[i+1]]
-				if !ok1 || !ok2 {
+				// Obter contexto (caracteres anteriores)
+				context := runes[i-m.ContextSize : i]
+				nextChar := runes[i+1]
+
+				nextID, okNext := m.CharToID[nextChar]
+				if !okNext {
 					continue
 				}
 
-				// Forward
-				logits := make([]float64, m.Size)
-				copy(logits, m.Weights[curr])
+				// Converter contexto para índice
+				contextIdx := m.contextToIndex(context)
+
+				// Forward pass
+				m.mu.RLock()
+				logits := make([]float64, m.VocabSize)
+				copy(logits, m.Weights[contextIdx])
+				m.mu.RUnlock()
 
 				probs := Softmax(logits)
 
-				// Calcular loss
-				loss := -math.Log(probs[next] + 1e-9)
+				// Calcular loss (cross-entropy)
+				loss := -math.Log(probs[nextID] + 1e-9)
 
 				// Calcular e acumular gradientes
-				for j := 0; j < m.Size; j++ {
+				for j := 0; j < m.VocabSize; j++ {
 					target := 0.0
-					if j == next {
+					if j == nextID {
 						target = 1.0
 					}
-					gradients[curr][j] += probs[j] - target
+					gradients[contextIdx][j] += probs[j] - target
 				}
 
 				batchLoss += loss
@@ -178,29 +199,59 @@ func (m *LmcsLLM) Train(text string, epochs int, lr float64, batchSize int) {
 
 		elapsed := time.Since(startTime)
 		avgLoss := totalLoss / float64(samples)
-		log.Printf("Época %d/%d - Loss: %.4f | Tempo: %v\n", e, epochs, avgLoss, elapsed)
+
+		// Log a cada 10 épocas ou última
+		if e%10 == 0 || e == epochs {
+			log.Printf("Época %d/%d - Loss: %.4f | Tempo: %v\n", e, epochs, avgLoss, elapsed)
+		}
 	}
 }
 
-// Generate gera texto a partir de uma semente
-func (m *LmcsLLM) Generate(seed rune, length int, temperature float64) string {
+// contextToIndex converte um contexto de runes para um índice linear
+func (m *LmcsLLM) contextToIndex(context []rune) int {
+	// Usar hash para mapear contexto para índice
+	hash := 0
+	for _, r := range context {
+		charID, ok := m.CharToID[r]
+		if !ok {
+			charID = 0
+		}
+		hash = hash*31 + charID
+	}
+
+	return int(math.Abs(float64(hash))) % len(m.Weights)
+}
+
+// Generate gera texto a partir de um contexto inicial
+func (m *LmcsLLM) Generate(seed string, length int, temperature float64, topK int) string {
 	if temperature <= 0 {
-		temperature = 0.8
+		temperature = 0.7
+	}
+	if topK <= 0 {
+		topK = 40
 	}
 
 	result := NewGenerator()
-	result.WriteRune(seed)
-	curr := seed
+	result.WriteString(seed)
+
+	// Usar os últimos contextSize caracteres como contexto
+	contextRunes := []rune(seed)
+	if len(contextRunes) > m.ContextSize {
+		contextRunes = contextRunes[len(contextRunes)-m.ContextSize:]
+	}
 
 	for i := 0; i < length; i++ {
-		id, ok := m.CharToID[curr]
-		if !ok {
-			break
+		// Padding se necessário
+		for len(contextRunes) < m.ContextSize {
+			contextRunes = append([]rune{contextRunes[0]}, contextRunes...)
 		}
 
+		// Obter índice do contexto
+		contextIdx := m.contextToIndex(contextRunes)
+
 		m.mu.RLock()
-		logits := make([]float64, m.Size)
-		copy(logits, m.Weights[id])
+		logits := make([]float64, m.VocabSize)
+		copy(logits, m.Weights[contextIdx])
 		m.mu.RUnlock()
 
 		// Aplicar temperatura
@@ -212,10 +263,14 @@ func (m *LmcsLLM) Generate(seed rune, length int, temperature float64) string {
 
 		probs := Softmax(logits)
 
-		// Amostragem categórica
-		nextIdx := Sample(probs)
-		curr = m.IDToChar[nextIdx]
-		result.WriteRune(curr)
+		// Top-K sampling
+		nextIdx := SampleTopK(probs, topK)
+		nextChar := m.IDToChar[nextIdx]
+
+		result.WriteRune(nextChar)
+
+		// Atualizar contexto
+		contextRunes = append(contextRunes[1:], nextChar)
 	}
 
 	return result.String()

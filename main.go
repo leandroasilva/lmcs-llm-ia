@@ -54,7 +54,7 @@ func main() {
 		}
 		log.Println("Modelo carregado com sucesso!")
 	} else {
-		mdl = model.New(content)
+		mdl = model.New(content, cfg.Training.ContextSize)
 	}
 
 	// Treinar modelo

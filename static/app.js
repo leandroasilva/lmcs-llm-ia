@@ -129,10 +129,11 @@ async function generateAIResponse(conversation) {
     const loadingId = addLoadingMessage();
     
     try {
-        // Extrair primeiro caractere da mensagem para seed
+        // Extrair seed da mensagem (primeiras 2-3 palavras)
         const seed = extractSeed(conversation.messages[conversation.messages.length - 1].content);
         const length = parseInt(maxLengthInput.value) || 100;
-        const temperature = parseFloat(temperatureSlider.value) || 0.8;
+        const temperature = parseFloat(temperatureSlider.value) || 0.7;
+        const topK = 40;
         
         // Chamar API
         const response = await fetch('/api/ask', {
@@ -143,7 +144,8 @@ async function generateAIResponse(conversation) {
             body: JSON.stringify({
                 seed: seed,
                 length: length,
-                temperature: temperature
+                temperature: temperature,
+                top_k: topK
             })
         });
         
@@ -183,9 +185,12 @@ async function generateAIResponse(conversation) {
 
 // Extrair seed da mensagem
 function extractSeed(text) {
-    // Remover caracteres não alfabéticos e pegar primeira letra
-    const cleanText = text.replace(/[^a-zA-ZÀ-ú]/g, '');
-    return cleanText.length > 0 ? cleanText[0].toLowerCase() : 'o';
+    // Pegar primeiras 2-3 palavras ou 10 caracteres como contexto
+    const words = text.split(/\s+/).slice(0, 3).join(' ');
+    if (words.length >= 5) {
+        return words.substring(0, 10);
+    }
+    return 'o ';
 }
 
 // Adicionar mensagem de loading

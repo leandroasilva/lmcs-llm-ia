@@ -13,6 +13,7 @@ type GenerateRequest struct {
 	Seed        string  `json:"seed"`
 	Length      int     `json:"length"`
 	Temperature float64 `json:"temperature"`
+	TopK        int     `json:"top_k"`
 }
 
 // GenerateResponse representa uma resposta da API
@@ -87,25 +88,20 @@ func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
 
 	// Validações
 	if req.Seed == "" {
-		req.Seed = "o"
+		req.Seed = "o "
 	}
 	if req.Length <= 0 || req.Length > 1000 {
 		req.Length = 100
 	}
 	if req.Temperature <= 0 || req.Temperature > 2.0 {
-		req.Temperature = 0.8
+		req.Temperature = 0.7
 	}
-
-	// Extrair primeiro caractere da seed
-	seedRunes := []rune(req.Seed)
-	if len(seedRunes) == 0 {
-		h.sendError(w, "Seed inválida", http.StatusBadRequest)
-		return
+	if req.TopK <= 0 || req.TopK > 100 {
+		req.TopK = 40
 	}
-	seed := seedRunes[0]
 
 	// Gerar texto
-	resp := h.model.Generate(seed, req.Length, req.Temperature)
+	resp := h.model.Generate(req.Seed, req.Length, req.Temperature, req.TopK)
 
 	h.sendJSON(w, GenerateResponse{
 		Success: true,

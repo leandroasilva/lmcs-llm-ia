@@ -3,6 +3,7 @@ package model
 import (
 	"math"
 	"math/rand"
+	"sort"
 	"strings"
 )
 
@@ -40,6 +41,54 @@ func Sample(probs []float64) int {
 		}
 	}
 	return len(probs) - 1
+}
+
+// SampleTopK amostra considerando apenas o top-K probabilidades mais altas
+func SampleTopK(probs []float64, k int) int {
+	if k >= len(probs) {
+		return Sample(probs)
+	}
+
+	// Criar lista de (probabilidade, índice)
+	type probIdx struct {
+		prob float64
+		idx  int
+	}
+
+	pairs := make([]probIdx, len(probs))
+	for i, p := range probs {
+		pairs[i] = probIdx{p, i}
+	}
+
+	// Ordenar por probabilidade (decrescente)
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].prob > pairs[j].prob
+	})
+
+	// Pegar top-K
+	topK := pairs[:k]
+
+	// Renormalizar probabilidades
+	sum := 0.0
+	for _, p := range topK {
+		sum += p.prob
+	}
+
+	if sum == 0 {
+		return topK[rand.Intn(len(topK))].idx
+	}
+
+	// Amostrar do top-K renormalizado
+	r := rand.Float64()
+	cumsum := 0.0
+	for _, p := range topK {
+		cumsum += p.prob / sum
+		if r <= cumsum {
+			return p.idx
+		}
+	}
+
+	return topK[len(topK)-1].idx
 }
 
 // Generator helper para construção eficiente de strings
