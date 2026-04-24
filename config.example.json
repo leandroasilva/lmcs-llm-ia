@@ -10,7 +10,7 @@
     "host": "localhost"
   },
   "paths": {
-    "model_path": "modelo_treinado.bin",
+    "model_path": "lmcs-model.bin",
     "input_file": "livro.txt"
   }
 }
