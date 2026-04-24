@@ -200,10 +200,12 @@ func (m *LstmModel) Forward(inputs []int) ([]float64, [][]float64, [][]float64) 
 
 	// Camada de saída (usando o último hidden state)
 	hFinal := hStates[len(inputs)]
+	hFinalVec := mat.NewVecDense(m.HiddenSize, hFinal)
 	logits := make([]float64, m.VocabSize)
-	mat.Col(logits, 0, mat.DenseCopyOf(m.Wy).MulVec(mat.NewVecDense(m.HiddenSize, hFinal)))
+	var Wy_h mat.VecDense
+	Wy_h.MulVec(m.Wy, hFinalVec)
 	for j := 0; j < m.VocabSize; j++ {
-		logits[j] += m.By.At(j, 0)
+		logits[j] = Wy_h.At(j, 0) + m.By.At(j, 0)
 	}
 
 	probs := softmax(logits)
