@@ -3,6 +3,7 @@ package model
 import (
 	"math"
 	"math/rand"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -99,4 +100,41 @@ type Generator struct {
 // NewGenerator cria um novo Generator
 func NewGenerator() *Generator {
 	return &Generator{}
+}
+
+// PreprocessText limpa e normaliza o texto para treinamento
+func PreprocessText(text string) string {
+	// Converter para minúsculas
+	text = strings.ToLower(text)
+
+	// Preservar apenas caracteres permitidos:
+	// - Letras minúsculas (a-z)
+	// - Letras acentuadas portuguesas (áéíóúãõâêôç)
+	// - Espaços
+	// - Pontuação básica (.,;:!?)
+	allowedPattern := regexp.MustCompile(`[^a-záàâãéèêíïóôõöúçñ\s.,;:!?\-\"\']`)
+	text = allowedPattern.ReplaceAllString(text, "")
+
+	// Substituir múltiplos espaços por um único
+	spacePattern := regexp.MustCompile(`\s+`)
+	text = spacePattern.ReplaceAllString(text, " ")
+
+	// Substituir múltiplas pontuações por uma única
+	punctPattern := regexp.MustCompile(`([.,;:!?]){2,}`)
+	text = punctPattern.ReplaceAllString(text, "$1")
+
+	// Remover espaços antes de pontuação
+	text = strings.ReplaceAll(text, " .", ".")
+	text = strings.ReplaceAll(text, " ,", ",")
+	text = strings.ReplaceAll(text, " !", "!")
+	text = strings.ReplaceAll(text, " ?", "?")
+
+	// Garantir espaço após pontuação (exceto no final)
+	text = strings.ReplaceAll(text, ". ", ". ")
+	text = strings.ReplaceAll(text, ", ", ", ")
+
+	// Remover espaços no início e fim
+	text = strings.TrimSpace(text)
+
+	return text
 }

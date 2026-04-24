@@ -42,6 +42,11 @@ func main() {
 	} else {
 		content = string(data)
 		log.Printf("Texto carregado: %d caracteres\n", len(content))
+
+		// Pré-processar texto
+		log.Println("Pré-processando texto...")
+		content = model.PreprocessText(content)
+		log.Printf("Texto após pré-processamento: %d caracteres\n", len(content))
 	}
 
 	// Carregar ou criar modelo
