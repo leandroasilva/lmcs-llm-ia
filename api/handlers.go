@@ -40,8 +40,20 @@ func NewHandler(m *model.LmcsLLM) *Handler {
 
 // RegisterRoutes registra todas as rotas da API
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/ask", h.handleAsk)
-	mux.HandleFunc("/health", h.handleHealth)
+	// Rotas da API
+	mux.HandleFunc("/api/ask", h.handleAsk)
+	mux.HandleFunc("/api/health", h.handleHealth)
+
+	// Arquivos estáticos
+	fs := http.FileServer(http.Dir("static"))
+	mux.Handle("/static/", http.StripPrefix("/static/", fs))
+
+	// Redirecionar raiz para o frontend
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			http.ServeFile(w, r, "static/index.html")
+		}
+	})
 }
 
 // handleAsk handler para geração de texto

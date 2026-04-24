@@ -77,11 +77,11 @@ func main() {
 	handler := api.NewHandler(mdl)
 	handler.RegisterRoutes(mux)
 
-	log.Printf("API rodando em http://%s%s\n", cfg.Server.Host, cfg.Server.Port)
-	log.Println("Endpoints:")
-	log.Println("  GET  /ask?q=o&length=100&temperature=0.8")
-	log.Println("  POST /ask {\"seed\": \"o\", \"length\": 100, \"temperature\": 0.8}")
-	log.Println("  GET  /health")
+	log.Printf("Servidor rodando em http://%s%s\n", cfg.Server.Host, cfg.Server.Port)
+	log.Println("Frontend: http://localhost" + cfg.Server.Port)
+	log.Println("API Endpoints:")
+	log.Println("  GET  /api/health")
+	log.Println("  POST /api/ask")
 
 	// Iniciar servidor
 	if err := http.ListenAndServe(cfg.Server.Port, mux); err != nil {
