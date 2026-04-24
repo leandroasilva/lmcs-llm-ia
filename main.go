@@ -42,7 +42,6 @@ func LoadModel(path string) (*LmcsLLM, error) {
 }
 
 // --- 2. INICIALIZAÇÃO ---
-
 func NewLmcsLLM(text string) *LmcsLLM {
 	uniqueMap := make(map[rune]bool)
 	for _, r := range text {
