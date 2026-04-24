@@ -1,3 +1,5 @@
 module github.com/leandroasilva/lmcs-llm-ia
 
-go 1.22.2
+go 1.24.0
+
+require gonum.org/v1/gonum v0.17.0 // indirect

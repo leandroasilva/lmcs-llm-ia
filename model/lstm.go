@@ -6,31 +6,33 @@ import (
 	"math"
 	"math/rand"
 	"os"
+
+	"gonum.org/v1/gonum/mat"
 )
 
-// LstmModel representa um modelo de linguagem baseado em LSTM
+// LstmModel representa um modelo de linguagem baseado em LSTM otimizado com gonum
 type LstmModel struct {
 	VocabSize    int
 	HiddenSize   int
 	ContextSize  int
 	LearningRate float64
 
-	// Pesos do LSTM (input gate, forget gate, output gate, cell candidate)
-	Wi, Ui, Bi []float64 // Input gate
-	Wf, Uf, Bf []float64 // Forget gate
-	Wo, Uo, Bo []float64 // Output gate
-	Wc, Uc, Bc []float64 // Cell candidate
+	// Pesos do LSTM (matrizes otimizadas)
+	Wi, Ui, Bi *mat.Dense // Input gate
+	Wf, Uf, Bf *mat.Dense // Forget gate
+	Wo, Uo, Bo *mat.Dense // Output gate
+	Wc, Uc, Bc *mat.Dense // Cell candidate
 
 	// Pesos da camada de saída
-	Wy []float64
-	By []float64
+	Wy *mat.Dense
+	By *mat.Dense
 
 	// Mapeamento de caracteres
 	CharToID map[rune]int
 	IDToChar map[int]rune
 }
 
-// NewLstmModel cria um novo modelo LSTM
+// NewLstmModel cria um novo modelo LSTM otimizado
 func NewLstmModel(vocabSize, hiddenSize, contextSize int, learningRate float64, charToID map[rune]int, idToChar map[int]rune) *LstmModel {
 	model := &LstmModel{
 		VocabSize:    vocabSize,
@@ -42,46 +44,36 @@ func NewLstmModel(vocabSize, hiddenSize, contextSize int, learningRate float64, 
 	}
 
 	// Inicializar pesos com valores pequenos aleatórios
-	scale := 0.01
-	model.Wi = initWeights(hiddenSize, vocabSize, scale)
-	model.Ui = initWeights(hiddenSize, hiddenSize, scale)
-	model.Bi = make([]float64, hiddenSize)
+	scale := 0.1
+	model.Wi = randomMatrix(hiddenSize, vocabSize, scale)
+	model.Ui = randomMatrix(hiddenSize, hiddenSize, scale)
+	model.Bi = mat.NewDense(hiddenSize, 1, make([]float64, hiddenSize))
 
-	model.Wf = initWeights(hiddenSize, vocabSize, scale)
-	model.Uf = initWeights(hiddenSize, hiddenSize, scale)
-	model.Bf = make([]float64, hiddenSize)
+	model.Wf = randomMatrix(hiddenSize, vocabSize, scale)
+	model.Uf = randomMatrix(hiddenSize, hiddenSize, scale)
+	model.Bf = mat.NewDense(hiddenSize, 1, make([]float64, hiddenSize))
 
-	model.Wo = initWeights(hiddenSize, vocabSize, scale)
-	model.Uo = initWeights(hiddenSize, hiddenSize, scale)
-	model.Bo = make([]float64, hiddenSize)
+	model.Wo = randomMatrix(hiddenSize, vocabSize, scale)
+	model.Uo = randomMatrix(hiddenSize, hiddenSize, scale)
+	model.Bo = mat.NewDense(hiddenSize, 1, make([]float64, hiddenSize))
 
-	model.Wc = initWeights(hiddenSize, vocabSize, scale)
-	model.Uc = initWeights(hiddenSize, hiddenSize, scale)
-	model.Bc = make([]float64, hiddenSize)
+	model.Wc = randomMatrix(hiddenSize, vocabSize, scale)
+	model.Uc = randomMatrix(hiddenSize, hiddenSize, scale)
+	model.Bc = mat.NewDense(hiddenSize, 1, make([]float64, hiddenSize))
 
-	model.Wy = initWeights(vocabSize, hiddenSize, scale)
-	model.By = make([]float64, vocabSize)
+	model.Wy = randomMatrix(vocabSize, hiddenSize, scale)
+	model.By = mat.NewDense(vocabSize, 1, make([]float64, vocabSize))
 
 	return model
 }
 
-// initWeights inicializa uma matriz de pesos com valores aleatórios
-func initWeights(rows, cols int, scale float64) []float64 {
-	weights := make([]float64, rows*cols)
-	for i := range weights {
-		weights[i] = (rand.Float64()*2 - 1) * scale
+// randomMatrix cria uma matriz com valores aleatórios
+func randomMatrix(rows, cols int, scale float64) *mat.Dense {
+	data := make([]float64, rows*cols)
+	for i := range data {
+		data[i] = (rand.Float64()*2 - 1) * scale
 	}
-	return weights
-}
-
-// getWeight acessa um elemento da matriz de pesos
-func getWeight(weights []float64, row, col, cols int) float64 {
-	return weights[row*cols+col]
-}
-
-// setWeight define um elemento da matriz de pesos
-func setWeight(weights []float64, row, col, cols int, value float64) {
-	weights[row*cols+col] = value
+	return mat.NewDense(rows, cols, data)
 }
 
 // sigmoid função de ativação sigmoid
@@ -89,9 +81,22 @@ func sigmoid(x float64) float64 {
 	return 1.0 / (1.0 + math.Exp(-x))
 }
 
-// tanh função de ativação tanh
-func tanh(x float64) float64 {
-	return math.Tanh(x)
+// sigmoidVec aplica sigmoid a um vetor
+func sigmoidVec(v []float64) []float64 {
+	result := make([]float64, len(v))
+	for i, x := range v {
+		result[i] = sigmoid(x)
+	}
+	return result
+}
+
+// tanhVec aplica tanh a um vetor
+func tanhVec(v []float64) []float64 {
+	result := make([]float64, len(v))
+	for i, x := range v {
+		result[i] = math.Tanh(x)
+	}
+	return result
 }
 
 // softmax função de ativação softmax
@@ -116,7 +121,7 @@ func softmax(logits []float64) []float64 {
 	return probs
 }
 
-// Forward realiza o forward pass do LSTM
+// Forward realiza o forward pass do LSTM otimizado
 func (m *LstmModel) Forward(inputs []int) ([]float64, [][]float64, [][]float64) {
 	// Hidden states e cell states para cada time step
 	hStates := make([][]float64, len(inputs)+1)
@@ -126,106 +131,83 @@ func (m *LstmModel) Forward(inputs []int) ([]float64, [][]float64, [][]float64) 
 	hStates[0] = make([]float64, m.HiddenSize)
 	cStates[0] = make([]float64, m.HiddenSize)
 
-	// Gate values para BPTT
-	gateI := make([][]float64, len(inputs))
-	gateF := make([][]float64, len(inputs))
-	gateO := make([][]float64, len(inputs))
-	gateC := make([][]float64, len(inputs))
+	// Pré-alocar vetores para eficiência
+	xVec := mat.NewVecDense(m.VocabSize, nil)
+	hVec := mat.NewVecDense(m.HiddenSize, nil)
 
 	// Processar cada time step
 	for t := 0; t < len(inputs); t++ {
-		x := make([]float64, m.VocabSize)
-		x[inputs[t]] = 1.0
+		// One-hot encoding do input
+		xData := make([]float64, m.VocabSize)
+		xData[inputs[t]] = 1.0
+		xVec = mat.NewVecDense(m.VocabSize, xData)
 
 		hPrev := hStates[t]
 		cPrev := cStates[t]
+		hVec = mat.NewVecDense(m.HiddenSize, hPrev)
 
-		// Input gate
+		// Input gate: i = sigmoid(Wi·x + Ui·h + bi)
+		var Wi_x, Ui_h mat.VecDense
+		Wi_x.MulVec(m.Wi, xVec)
+		Ui_h.MulVec(m.Ui, hVec)
 		i := make([]float64, m.HiddenSize)
 		for j := 0; j < m.HiddenSize; j++ {
-			sum := m.Bi[j]
-			for k := 0; k < m.VocabSize; k++ {
-				sum += getWeight(m.Wi, j, k, m.VocabSize) * x[k]
-			}
-			for k := 0; k < m.HiddenSize; k++ {
-				sum += getWeight(m.Ui, j, k, m.HiddenSize) * hPrev[k]
-			}
-			i[j] = sigmoid(sum)
+			i[j] = sigmoid(Wi_x.At(j, 0) + Ui_h.At(j, 0) + m.Bi.At(j, 0))
 		}
 
-		// Forget gate
+		// Forget gate: f = sigmoid(Wf·x + Uf·h + bf)
+		var Wf_x, Uf_h mat.VecDense
+		Wf_x.MulVec(m.Wf, xVec)
+		Uf_h.MulVec(m.Uf, hVec)
 		f := make([]float64, m.HiddenSize)
 		for j := 0; j < m.HiddenSize; j++ {
-			sum := m.Bf[j]
-			for k := 0; k < m.VocabSize; k++ {
-				sum += getWeight(m.Wf, j, k, m.VocabSize) * x[k]
-			}
-			for k := 0; k < m.HiddenSize; k++ {
-				sum += getWeight(m.Uf, j, k, m.HiddenSize) * hPrev[k]
-			}
-			f[j] = sigmoid(sum)
+			f[j] = sigmoid(Wf_x.At(j, 0) + Uf_h.At(j, 0) + m.Bf.At(j, 0))
 		}
 
-		// Output gate
+		// Output gate: o = sigmoid(Wo·x + Uo·h + bo)
+		var Wo_x, Uo_h mat.VecDense
+		Wo_x.MulVec(m.Wo, xVec)
+		Uo_h.MulVec(m.Uo, hVec)
 		o := make([]float64, m.HiddenSize)
 		for j := 0; j < m.HiddenSize; j++ {
-			sum := m.Bo[j]
-			for k := 0; k < m.VocabSize; k++ {
-				sum += getWeight(m.Wo, j, k, m.VocabSize) * x[k]
-			}
-			for k := 0; k < m.HiddenSize; k++ {
-				sum += getWeight(m.Uo, j, k, m.HiddenSize) * hPrev[k]
-			}
-			o[j] = sigmoid(sum)
+			o[j] = sigmoid(Wo_x.At(j, 0) + Uo_h.At(j, 0) + m.Bo.At(j, 0))
 		}
 
-		// Cell candidate
+		// Cell candidate: c̃ = tanh(Wc·x + Uc·h + bc)
+		var Wc_x, Uc_h mat.VecDense
+		Wc_x.MulVec(m.Wc, xVec)
+		Uc_h.MulVec(m.Uc, hVec)
 		c := make([]float64, m.HiddenSize)
 		for j := 0; j < m.HiddenSize; j++ {
-			sum := m.Bc[j]
-			for k := 0; k < m.VocabSize; k++ {
-				sum += getWeight(m.Wc, j, k, m.VocabSize) * x[k]
-			}
-			for k := 0; k < m.HiddenSize; k++ {
-				sum += getWeight(m.Uc, j, k, m.HiddenSize) * hPrev[k]
-			}
-			c[j] = tanh(sum)
+			c[j] = math.Tanh(Wc_x.At(j, 0) + Uc_h.At(j, 0) + m.Bc.At(j, 0))
 		}
 
-		// Cell state
+		// Cell state: c_new = f ⊙ c_prev + i ⊙ c̃
 		cNew := make([]float64, m.HiddenSize)
 		for j := 0; j < m.HiddenSize; j++ {
 			cNew[j] = f[j]*cPrev[j] + i[j]*c[j]
 		}
 
-		// Hidden state
+		// Hidden state: h_new = o ⊙ tanh(c_new)
 		hNew := make([]float64, m.HiddenSize)
 		for j := 0; j < m.HiddenSize; j++ {
-			hNew[j] = o[j] * tanh(cNew[j])
+			hNew[j] = o[j] * math.Tanh(cNew[j])
 		}
 
 		hStates[t+1] = hNew
 		cStates[t+1] = cNew
-		gateI[t] = i
-		gateF[t] = f
-		gateO[t] = o
-		gateC[t] = c
 	}
 
 	// Camada de saída (usando o último hidden state)
 	hFinal := hStates[len(inputs)]
 	logits := make([]float64, m.VocabSize)
+	mat.Col(logits, 0, mat.DenseCopyOf(m.Wy).MulVec(mat.NewVecDense(m.HiddenSize, hFinal)))
 	for j := 0; j < m.VocabSize; j++ {
-		sum := m.By[j]
-		for k := 0; k < m.HiddenSize; k++ {
-			sum += getWeight(m.Wy, j, k, m.HiddenSize) * hFinal[k]
-		}
-		logits[j] = sum
+		logits[j] += m.By.At(j, 0)
 	}
 
 	probs := softmax(logits)
 
-	// Retornar probs, hStates, cStates e gates para BPTT
 	return probs, hStates, cStates
 }
 
@@ -238,7 +220,7 @@ func CrossEntropyLoss(probs []float64, target int) float64 {
 	return -math.Log(prob)
 }
 
-// Train realiza uma iteração de treinamento com BPTT simplificado
+// Train realiza uma iteração de treinamento
 func (m *LstmModel) Train(inputs []int, target int) float64 {
 	// Forward pass
 	probs, hStates, _ := m.Forward(inputs)
@@ -251,27 +233,18 @@ func (m *LstmModel) Train(inputs []int, target int) float64 {
 	copy(dLogits, probs)
 	dLogits[target] -= 1.0
 
-	// Gradient dos pesos de saída
+	// Update pesos de saída
 	hFinal := hStates[len(inputs)]
 	for j := 0; j < m.VocabSize; j++ {
-		m.By[j] -= m.LearningRate * dLogits[j]
+		// Update bias
+		m.By.Set(j, 0, m.By.At(j, 0)-m.LearningRate*dLogits[j])
+
+		// Update weights
 		for k := 0; k < m.HiddenSize; k++ {
 			grad := dLogits[j] * hFinal[k]
-			m.Wy[j*m.HiddenSize+k] -= m.LearningRate * grad
+			m.Wy.Set(j, k, m.Wy.At(j, k)-m.LearningRate*grad)
 		}
 	}
-
-	// Backpropagation simplificado (apenas último time step)
-	// Para uma implementação completa, seria necessário BPTT completo
-	dh := make([]float64, m.HiddenSize)
-	for j := 0; j < m.HiddenSize; j++ {
-		for k := 0; k < m.VocabSize; k++ {
-			dh[j] += getWeight(m.Wy, k, j, m.HiddenSize) * dLogits[k]
-		}
-	}
-
-	// Simplificação: não fazer BPTT completo para manter o código gerenciável
-	// Em uma implementação completa, faríamos backprop através de todos os time steps
 
 	return loss
 }
@@ -367,12 +340,35 @@ func LoadLstmModel(path string) (*LstmModel, error) {
 
 // GetModelInfo retorna informações sobre o modelo
 func (m *LstmModel) GetModelInfo() string {
-	totalParams := len(m.Wi) + len(m.Ui) + len(m.Bi) +
-		len(m.Wf) + len(m.Uf) + len(m.Bf) +
-		len(m.Wo) + len(m.Uo) + len(m.Bo) +
-		len(m.Wc) + len(m.Uc) + len(m.Bc) +
-		len(m.Wy) + len(m.By)
+	r, c := m.Wi.Dims()
+	totalParams := r * c
+	r, c = m.Ui.Dims()
+	totalParams += r * c
+	r, c = m.Bi.Dims()
+	totalParams += r * c
+	r, c = m.Wf.Dims()
+	totalParams += r * c
+	r, c = m.Uf.Dims()
+	totalParams += r * c
+	r, c = m.Bf.Dims()
+	totalParams += r * c
+	r, c = m.Wo.Dims()
+	totalParams += r * c
+	r, c = m.Uo.Dims()
+	totalParams += r * c
+	r, c = m.Bo.Dims()
+	totalParams += r * c
+	r, c = m.Wc.Dims()
+	totalParams += r * c
+	r, c = m.Uc.Dims()
+	totalParams += r * c
+	r, c = m.Bc.Dims()
+	totalParams += r * c
+	r, c = m.Wy.Dims()
+	totalParams += r * c
+	r, c = m.By.Dims()
+	totalParams += r * c
 
-	return fmt.Sprintf("LSTM: vocab=%d, hidden=%d, context=%d, params=%d",
+	return fmt.Sprintf("LSTM (gonum): vocab=%d, hidden=%d, context=%d, params=%d",
 		m.VocabSize, m.HiddenSize, m.ContextSize, totalParams)
 }
