@@ -1,0 +1,16 @@
+{
+  "training": {
+    "epochs": 50,
+    "learning_rate": 0.01,
+    "batch_size": 32,
+    "temperature": 0.8
+  },
+  "server": {
+    "port": ":8080",
+    "host": "localhost"
+  },
+  "paths": {
+    "model_path": "modelo_treinado.bin",
+    "input_file": "livro.txt"
+  }
+}
