@@ -4,6 +4,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"runtime"
 	"time"
 
 	"github.com/leandroasilva/lmcs-llm-ia/api"
@@ -13,6 +14,11 @@ import (
 
 func main() {
 	log.Println("=== LMCS LLM IA ===")
+
+	// Configurar número de threads/cores para máxima performance
+	numCPUs := runtime.NumCPU()
+	runtime.GOMAXPROCS(numCPUs)
+	log.Printf("Usando %d threads/cores (GOMAXPROCS)\n", numCPUs)
 
 	// Carregar configurações
 	cfg := config.DefaultConfig()
@@ -56,12 +62,16 @@ func main() {
 
 	if cfg.Training.UseLSTM {
 		// Usar modelo LSTM
+		modelLoaded := false
 		if _, err := os.Stat(cfg.Paths.ModelPath); err == nil {
 			log.Printf("Carregando modelo LSTM existente de %s...\n", cfg.Paths.ModelPath)
 			lstmMdl, err = model.LoadLstmModel(cfg.Paths.ModelPath)
 			if err != nil {
 				log.Printf("Erro ao carregar modelo LSTM, criando novo: %v\n", err)
 				lstmMdl = nil
+			} else {
+				modelLoaded = true
+				log.Printf("Modelo LSTM carregado com sucesso! %s\n", lstmMdl.GetModelInfo())
 			}
 		}
 
@@ -82,18 +92,22 @@ func main() {
 			log.Printf("Modelo LSTM criado: %s\n", lstmMdl.GetModelInfo())
 		}
 
-		// Treinar modelo LSTM
-		log.Printf("Iniciando treinamento LSTM: %d épocas, lr=%.4f, batch=%d, context=%d, hidden=%d\n",
-			cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize,
-			cfg.Training.ContextSize, cfg.Training.HiddenSize)
+		// Treinar modelo LSTM apenas se for novo ou se configuração exigir retreinamento
+		if !modelLoaded {
+			log.Printf("Iniciando treinamento LSTM: %d épocas, lr=%.4f, batch=%d, context=%d, hidden=%d\n",
+				cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize,
+				cfg.Training.ContextSize, cfg.Training.HiddenSize)
 
-		trainLstm(lstmMdl, content, cfg)
+			trainLstm(lstmMdl, content, cfg)
 
-		// Salvar modelo LSTM
-		if err := lstmMdl.SaveModel(cfg.Paths.ModelPath); err != nil {
-			log.Printf("Erro ao salvar modelo LSTM: %v\n", err)
+			// Salvar modelo LSTM
+			if err := lstmMdl.SaveModel(cfg.Paths.ModelPath); err != nil {
+				log.Printf("Erro ao salvar modelo LSTM: %v\n", err)
+			} else {
+				log.Printf("Modelo LSTM salvo em %s\n", cfg.Paths.ModelPath)
+			}
 		} else {
-			log.Printf("Modelo LSTM salvo em %s\n", cfg.Paths.ModelPath)
+			log.Println("Modelo já treinado carregado. Pulando treinamento.")
 		}
 	} else {
 		// Usar modelo antigo (softmax regression)
@@ -147,26 +161,34 @@ func main() {
 	}
 }
 
-// trainLstm treina o modelo LSTM
+// trainLstm treina o modelo LSTM com paralelismo
 func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
 	startTime := time.Now()
 	chars := []rune(content)
 	totalLoss := 0.0
 	reportInterval := 10
+	numWorkers := runtime.NumCPU()
+
+	log.Printf("Iniciando treinamento LSTM: %d épocas, lr=%.4f, batch=%d, context=%d, hidden=%d, workers=%d\n",
+		cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize, mdl.ContextSize, mdl.HiddenSize, numWorkers)
 
 	for epoch := 1; epoch <= cfg.Training.Epochs; epoch++ {
 		epochLoss := 0.0
 		samples := 0
 
-		// Treinar em batches
+		// Preparar todos os samples para processamento paralelo
+		type trainingSample struct {
+			inputs []int
+			target int
+		}
+
+		var samplesList []trainingSample
 		for i := 0; i < len(chars)-mdl.ContextSize-1; i += cfg.Training.BatchSize {
-			// Preparar input e target
 			end := i + mdl.ContextSize
 			if end >= len(chars)-1 {
 				break
 			}
 
-			// Converter contexto para índices
 			inputs := make([]int, 0, mdl.ContextSize)
 			for j := i; j < end; j++ {
 				if id, ok := mdl.CharToID[chars[j]]; ok {
@@ -178,17 +200,66 @@ func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
 				continue
 			}
 
-			// Target
 			targetChar := chars[end]
 			target, ok := mdl.CharToID[targetChar]
 			if !ok {
 				continue
 			}
 
-			// Treinar
-			loss := mdl.Train(inputs, target)
-			epochLoss += loss
-			samples++
+			samplesList = append(samplesList, trainingSample{inputs, target})
+		}
+
+		// Processar samples em paralelo usando goroutines
+		if numWorkers > 1 && len(samplesList) > 100 {
+			// Dividir samples entre workers
+			chunkSize := (len(samplesList) + numWorkers - 1) / numWorkers
+			workerLoss := make([]float64, numWorkers)
+			workerSamples := make([]int, numWorkers)
+			done := make(chan bool, numWorkers)
+
+			for w := 0; w < numWorkers; w++ {
+				start := w * chunkSize
+				end := start + chunkSize
+				if end > len(samplesList) {
+					end = len(samplesList)
+				}
+
+				if start >= len(samplesList) {
+					break
+				}
+
+				chunk := samplesList[start:end]
+				go func(workerID int, chunk []trainingSample) {
+					localLoss := 0.0
+					localSamples := 0
+					for _, sample := range chunk {
+						loss := mdl.Train(sample.inputs, sample.target)
+						localLoss += loss
+						localSamples++
+					}
+					workerLoss[workerID] = localLoss
+					workerSamples[workerID] = localSamples
+					done <- true
+				}(w, chunk)
+			}
+
+			// Esperar todos workers completarem
+			for w := 0; w < numWorkers; w++ {
+				<-done
+			}
+
+			// Agregar resultados
+			for w := 0; w < numWorkers; w++ {
+				epochLoss += workerLoss[w]
+				samples += workerSamples[w]
+			}
+		} else {
+			// Processamento sequencial para datasets pequenos
+			for _, sample := range samplesList {
+				loss := mdl.Train(sample.inputs, sample.target)
+				epochLoss += loss
+				samples++
+			}
 		}
 
 		if samples > 0 {

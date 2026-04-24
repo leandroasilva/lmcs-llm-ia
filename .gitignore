@@ -9,6 +9,7 @@ lmcs-llm-*
 
 # Dados de treinamento
 *.txt
+livros
 
 # Modelo treinado
 *.bin
