@@ -123,59 +123,41 @@ func (m *LmcsLLM) Train(text string, epochs int, lr float64, batchSize int) {
 				gradients[i] = make([]float64, m.Size)
 			}
 
-			var wg sync.WaitGroup
-			var mu sync.Mutex
 			batchLoss := 0.0
 			batchSamples := 0
 
-			// Processar cada par no batch em paralelo
+			// Processar cada par no batch sequencialmente para evitar problemas
 			for i := batchStart; i < batchEnd; i++ {
-				wg.Add(1)
-				go func(idx int) {
-					defer wg.Done()
+				curr, ok1 := m.CharToID[runes[i]]
+				next, ok2 := m.CharToID[runes[i+1]]
+				if !ok1 || !ok2 {
+					continue
+				}
 
-					curr, ok1 := m.CharToID[runes[idx]]
-					next, ok2 := m.CharToID[runes[idx+1]]
-					if !ok1 || !ok2 {
-						return
+				// Forward
+				logits := make([]float64, m.Size)
+				copy(logits, m.Weights[curr])
+
+				probs := softmax(logits)
+
+				// Calcular loss
+				loss := -math.Log(probs[next] + 1e-9)
+
+				// Calcular e acumular gradientes
+				for j := 0; j < m.Size; j++ {
+					target := 0.0
+					if j == next {
+						target = 1.0
 					}
+					gradients[curr][j] += probs[j] - target
+				}
 
-					// Forward
-					m.mu.RLock()
-					logits := make([]float64, m.Size)
-					copy(logits, m.Weights[curr])
-					m.mu.RUnlock()
-
-					probs := softmax(logits)
-
-					// Calcular loss
-					loss := -math.Log(probs[next] + 1e-9)
-
-					// Calcular gradientes
-					localGrad := make([]float64, m.Size)
-					for j := 0; j < m.Size; j++ {
-						target := 0.0
-						if j == next {
-							target = 1.0
-						}
-						localGrad[j] = probs[j] - target
-					}
-
-					// Acumular gradientes e loss de forma thread-safe
-					mu.Lock()
-					for j := 0; j < m.Size; j++ {
-						gradients[curr][j] += localGrad[j]
-					}
-					batchLoss += loss
-					batchSamples++
-					mu.Unlock()
-				}(i)
+				batchLoss += loss
+				batchSamples++
 			}
-			wg.Wait()
 
-			// Atualizar pesos com gradientes acumulados (fora do loop paralelo)
+			// Atualizar pesos com gradientes acumulados
 			if batchSamples > 0 {
-				m.mu.Lock()
 				for i := range gradients {
 					for j := range gradients[i] {
 						if gradients[i][j] != 0 {
@@ -183,7 +165,6 @@ func (m *LmcsLLM) Train(text string, epochs int, lr float64, batchSize int) {
 						}
 					}
 				}
-				m.mu.Unlock()
 			}
 
 			totalLoss += batchLoss
