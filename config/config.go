@@ -21,6 +21,8 @@ type TrainingConfig struct {
 	Temperature  float64 `json:"temperature"`
 	ContextSize  int     `json:"context_size"` // Tamanho do contexto (n-gramas)
 	TopK         int     `json:"top_k"`        // Top-K sampling
+	HiddenSize   int     `json:"hidden_size"`  // Tamanho da camada oculta (LSTM)
+	UseLSTM      bool    `json:"use_lstm"`     // Usar arquitetura LSTM
 }
 
 // ServerConfig configurações do servidor HTTP
@@ -39,12 +41,14 @@ type PathsConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Training: TrainingConfig{
-			Epochs:       200,
-			LearningRate: 0.005,
-			BatchSize:    64,
+			Epochs:       100,
+			LearningRate: 0.001,
+			BatchSize:    32,
 			Temperature:  0.7,
-			ContextSize:  10,
+			ContextSize:  15,
 			TopK:         40,
+			HiddenSize:   128,
+			UseLSTM:      true,
 		},
 		Server: ServerConfig{
 			Port: ":8080",

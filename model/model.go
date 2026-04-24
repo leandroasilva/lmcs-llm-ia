@@ -23,6 +23,29 @@ type LmcsLLM struct {
 	mu          sync.RWMutex
 }
 
+// BuildVocab cria mapeamento de vocabulário a partir do texto
+func BuildVocab(text string) (map[rune]int, map[int]rune) {
+	uniqueMap := make(map[rune]bool)
+	for _, r := range text {
+		uniqueMap[r] = true
+	}
+
+	var chars []rune
+	for r := range uniqueMap {
+		chars = append(chars, r)
+	}
+	sort.Slice(chars, func(i, j int) bool { return chars[i] < chars[j] })
+
+	cToID := make(map[rune]int)
+	idToC := make(map[int]rune)
+	for i, r := range chars {
+		cToID[r] = i
+		idToC[i] = r
+	}
+
+	return cToID, idToC
+}
+
 // New cria e inicializa um novo modelo
 func New(text string, contextSize int) *LmcsLLM {
 	log.Println("Inicializando novo modelo...")
