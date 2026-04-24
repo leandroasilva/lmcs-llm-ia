@@ -15,6 +15,7 @@ type LstmModel struct {
 	VocabSize    int
 	HiddenSize   int
 	ContextSize  int
+	NumLayers    int
 	LearningRate float64
 
 	// Pesos do LSTM (matrizes otimizadas)
@@ -33,17 +34,20 @@ type LstmModel struct {
 }
 
 // NewLstmModel cria um novo modelo LSTM otimizado
-func NewLstmModel(vocabSize, hiddenSize, contextSize int, learningRate float64, charToID map[rune]int, idToChar map[int]rune) *LstmModel {
+func NewLstmModel(vocabSize, hiddenSize, contextSize, numLayers int, learningRate float64, charToID map[rune]int, idToChar map[int]rune) *LstmModel {
 	model := &LstmModel{
 		VocabSize:    vocabSize,
 		HiddenSize:   hiddenSize,
 		ContextSize:  contextSize,
+		NumLayers:    numLayers,
 		LearningRate: learningRate,
 		CharToID:     charToID,
 		IDToChar:     idToChar,
 	}
 
 	// Inicializar pesos com valores pequenos aleatórios
+	// Nota: Suporte a múltiplas camadas requer hidden_size maior
+	// NumLayers é registrado para futuro uso
 	scale := 0.1
 	model.Wi = randomMatrix(hiddenSize, vocabSize, scale)
 	model.Ui = randomMatrix(hiddenSize, hiddenSize, scale)
@@ -371,6 +375,6 @@ func (m *LstmModel) GetModelInfo() string {
 	r, c = m.By.Dims()
 	totalParams += r * c
 
-	return fmt.Sprintf("LSTM (gonum): vocab=%d, hidden=%d, context=%d, params=%d",
-		m.VocabSize, m.HiddenSize, m.ContextSize, totalParams)
+	return fmt.Sprintf("LSTM (gonum): vocab=%d, hidden=%d, context=%d, layers=%d, params=%d",
+		m.VocabSize, m.HiddenSize, m.ContextSize, m.NumLayers, totalParams)
 }

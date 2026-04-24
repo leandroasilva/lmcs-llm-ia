@@ -22,6 +22,7 @@ type TrainingConfig struct {
 	ContextSize  int     `json:"context_size"` // Tamanho do contexto (n-gramas)
 	TopK         int     `json:"top_k"`        // Top-K sampling
 	HiddenSize   int     `json:"hidden_size"`  // Tamanho da camada oculta (LSTM)
+	NumLayers    int     `json:"num_layers"`   // Número de camadas LSTM
 	UseLSTM      bool    `json:"use_lstm"`     // Usar arquitetura LSTM
 }
 
@@ -48,6 +49,7 @@ func DefaultConfig() *Config {
 			ContextSize:  15,
 			TopK:         40,
 			HiddenSize:   128,
+			NumLayers:    1,
 			UseLSTM:      true,
 		},
 		Server: ServerConfig{
@@ -104,8 +106,11 @@ func (c *Config) Validate() error {
 	if c.Training.Temperature <= 0 || c.Training.Temperature > 2.0 {
 		return fmt.Errorf("temperature deve estar entre 0 e 2")
 	}
-	if c.Training.ContextSize <= 0 || c.Training.ContextSize > 20 {
-		return fmt.Errorf("context_size deve estar entre 1 e 20")
+	if c.Training.ContextSize <= 0 || c.Training.ContextSize > 100 {
+		return fmt.Errorf("context_size deve estar entre 1 e 100")
+	}
+	if c.Training.NumLayers <= 0 || c.Training.NumLayers > 5 {
+		return fmt.Errorf("num_layers deve estar entre 1 e 5")
 	}
 	if c.Training.TopK <= 0 || c.Training.TopK > 100 {
 		return fmt.Errorf("top_k deve estar entre 1 e 100")

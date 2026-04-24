@@ -85,6 +85,7 @@ func main() {
 				vocabSize,
 				cfg.Training.HiddenSize,
 				cfg.Training.ContextSize,
+				cfg.Training.NumLayers,
 				cfg.Training.LearningRate,
 				charToID,
 				idToChar,
