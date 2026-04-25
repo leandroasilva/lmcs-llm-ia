@@ -35,6 +35,15 @@ type Row struct {
 	Row map[string]interface{} `json:"row"`
 }
 
+// RowWithMetadata representa uma linha com metadados completos
+type RowWithMetadata struct {
+	Messages  []map[string]string `json:"messages"`
+	Intent    string              `json:"intent"`
+	Sentiment string              `json:"sentiment"`
+	Sector    string              `json:"sector"`
+	Turns     int                 `json:"turns"`
+}
+
 // APIResponse representa a resposta da API
 type APIResponse struct {
 	Rows []Row `json:"rows"`
@@ -153,7 +162,7 @@ func (d *DatasetDownloader) fetchPage(url string) ([]Row, error) {
 	return apiResp.Rows, nil
 }
 
-// saveToFile salva as mensagens no arquivo de treinamento
+// saveToFile salva as mensagens no arquivo de treinamento enriquecido
 func (d *DatasetDownloader) saveToFile(messages []map[string]string) error {
 	file, err := os.Create(d.OutputFile)
 	if err != nil {
@@ -164,6 +173,10 @@ func (d *DatasetDownloader) saveToFile(messages []map[string]string) error {
 	userCount := 0
 	assistantCount := 0
 
+	// Formato enriquecido com contexto
+	// [INTENT:compra] [SENTIMENT:negative] [SECTOR:telecom]
+	// Usuário: ...
+	// Assistente: ...
 	for _, msg := range messages {
 		role := msg["role"]
 		content := msg["content"]

@@ -19,11 +19,17 @@ type TrainingConfig struct {
 	LearningRate float64 `json:"learning_rate"`
 	BatchSize    int     `json:"batch_size"`
 	Temperature  float64 `json:"temperature"`
-	ContextSize  int     `json:"context_size"` // Tamanho do contexto (n-gramas)
+	ContextSize  int     `json:"context_size"` // Tamanho do contexto
 	TopK         int     `json:"top_k"`        // Top-K sampling
 	HiddenSize   int     `json:"hidden_size"`  // Tamanho da camada oculta (LSTM)
-	NumLayers    int     `json:"num_layers"`   // Número de camadas LSTM
+	NumLayers    int     `json:"num_layers"`   // Número de camadas
 	UseLSTM      bool    `json:"use_lstm"`     // Usar arquitetura LSTM
+	// Transformer
+	DModel    int `json:"d_model"`     // Dimension do modelo
+	NHeads    int `json:"n_heads"`     // Número de attention heads
+	MaxSeqLen int `json:"max_seq_len"` // Tamanho máximo da sequência
+	FFHidden  int `json:"ff_hidden"`   // Hidden size do feed-forward
+	MaxVocab  int `json:"max_vocab"`   // Tamanho máximo do vocabulário
 }
 
 // ServerConfig configurações do servidor HTTP

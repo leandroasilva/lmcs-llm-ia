@@ -1,11 +1,16 @@
 {
   "training": {
-    "epochs": 200,
-    "learning_rate": 0.005,
-    "batch_size": 64,
+    "epochs": 30,
+    "learning_rate": 0.001,
+    "batch_size": 16,
     "temperature": 0.7,
-    "context_size": 10,
-    "top_k": 40
+    "top_k": 30,
+    "d_model": 128,
+    "n_heads": 4,
+    "num_layers": 2,
+    "max_seq_len": 256,
+    "ff_hidden": 256,
+    "max_vocab": 5000
   },
   "server": {
     "port": ":8080",
@@ -13,6 +18,6 @@
   },
   "paths": {
     "model_path": "lmcs-model.bin",
-    "input_file": "livro.txt"
+    "input_file": "dataset/data/train_enriched.txt"
   }
 }

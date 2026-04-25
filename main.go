@@ -28,6 +28,13 @@ func main() {
 			}
 			log.Println("✅ Dataset baixado com sucesso!")
 			return
+		case "--download-enriched", "-de":
+			log.Println("📥 Modo download de dataset enriquecido com metadados")
+			if err := dataset.DownloadEnrichedDataset(); err != nil {
+				log.Fatalf("Erro ao baixar dataset enriquecido: %v\n", err)
+			}
+			log.Println("✅ Dataset enriquecido baixado com sucesso!")
+			return
 		case "--help", "-h":
 			printHelp()
 			return
@@ -75,117 +82,82 @@ func main() {
 		log.Printf("Texto após pré-processamento: %d caracteres\n", len(content))
 	}
 
-	// Carregar ou criar modelo
-	var mdl *model.LmcsLLM
-	var lstmMdl *model.LstmModel
+	// Carregar ou criar modelo Transformer
+	var transformerMdl *model.TransformerModel
+	modelLoaded := false
 
-	if cfg.Training.UseLSTM {
-		// Usar modelo LSTM
-		modelLoaded := false
-		if _, err := os.Stat(cfg.Paths.ModelPath); err == nil {
-			log.Printf("Carregando modelo LSTM existente de %s...\n", cfg.Paths.ModelPath)
-			lstmMdl, err = model.LoadLstmModel(cfg.Paths.ModelPath)
-			if err != nil {
-				log.Printf("Erro ao carregar modelo LSTM, criando novo: %v\n", err)
-				lstmMdl = nil
-			} else {
-				modelLoaded = true
-				log.Printf("Modelo LSTM carregado com sucesso! %s\n", lstmMdl.GetModelInfo())
-			}
-		}
-
-		if lstmMdl == nil {
-			log.Println("Inicializando novo modelo LSTM...")
-			// Criar mapeamento de caracteres
-			charToID, idToChar := model.BuildVocab(content)
-			vocabSize := len(charToID)
-
-			lstmMdl = model.NewLstmModel(
-				vocabSize,
-				cfg.Training.HiddenSize,
-				cfg.Training.ContextSize,
-				cfg.Training.NumLayers,
-				cfg.Training.LearningRate,
-				charToID,
-				idToChar,
-			)
-			log.Printf("Modelo LSTM criado: %s\n", lstmMdl.GetModelInfo())
-		}
-
-		// Treinar modelo LSTM
-		// Verificar se deve treinar (novo ou flag --train)
-		shouldTrain := !modelLoaded
-		for _, arg := range os.Args {
-			if arg == "--train" || arg == "-t" {
-				shouldTrain = true
-				log.Println("\n🔄 Modo treinamento adicional ativado!")
-			}
-		}
-
-		if shouldTrain {
-			if modelLoaded {
-				log.Printf("\nContinuando treinamento: %d épocas já treinadas", lstmMdl.EpochsTrained)
-				log.Printf("Adicionando %d novas épocas...\n", cfg.Training.Epochs)
-			} else {
-				log.Printf("\nIniciando treinamento LSTM: %d épocas, lr=%.4f, batch=%d, context=%d, hidden=%d\n",
-					cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize,
-					cfg.Training.ContextSize, cfg.Training.HiddenSize)
-			}
-
-			trainLstm(lstmMdl, content, cfg)
-
-			// Salvar modelo LSTM
-			if err := lstmMdl.SaveModel(cfg.Paths.ModelPath); err != nil {
-				log.Printf("Erro ao salvar modelo LSTM: %v\n", err)
-			} else {
-				log.Printf("\n✅ Modelo LSTM salvo em %s", cfg.Paths.ModelPath)
-				log.Printf("Total de épocas treinadas: %d", lstmMdl.EpochsTrained)
-				log.Printf("💡 Use './lmcs-llm' para carregar o modelo ou './lmcs-llm --train' para treinar mais\n")
-			}
+	if _, err := os.Stat(cfg.Paths.ModelPath); err == nil {
+		log.Printf("Carregando modelo Transformer existente de %s...\n", cfg.Paths.ModelPath)
+		transformerMdl, err = model.LoadTransformerModel(cfg.Paths.ModelPath)
+		if err != nil {
+			log.Printf("Erro ao carregar modelo Transformer, criando novo: %v\n", err)
+			transformerMdl = nil
 		} else {
-			log.Println("\n✅ Modelo já treinado carregado. Pronto para uso!")
-			log.Printf("📊 Status: %d épocas treinadas", lstmMdl.EpochsTrained)
-			log.Println("💡 Use './lmcs-llm --train' para adicionar mais épocas de treinamento")
+			modelLoaded = true
+			log.Printf("Modelo Transformer carregado com sucesso!\n")
+		}
+	}
+
+	if transformerMdl == nil {
+		log.Println("Inicializando novo modelo Transformer...")
+		// Criar vocabulário word-level
+		vocab, wordToID, idToWord := model.BuildVocabTransformer(content, cfg.Training.MaxVocab)
+		vocabSize := len(vocab)
+
+		transformerMdl = model.NewTransformerModel(
+			vocabSize,
+			cfg.Training.DModel,
+			cfg.Training.NHeads,
+			cfg.Training.NumLayers,
+			cfg.Training.MaxSeqLen,
+			cfg.Training.FFHidden,
+			cfg.Training.LearningRate,
+		)
+		transformerMdl.Vocab = vocab
+		transformerMdl.WordToID = wordToID
+		transformerMdl.IDToWord = idToWord
+		log.Printf("Modelo Transformer criado: vocab=%d, d_model=%d, heads=%d, layers=%d\n",
+			vocabSize, cfg.Training.DModel, cfg.Training.NHeads, cfg.Training.NumLayers)
+	}
+
+	// Treinar modelo Transformer
+	shouldTrain := !modelLoaded
+	for _, arg := range os.Args {
+		if arg == "--train" || arg == "-t" {
+			shouldTrain = true
+			log.Println("\n🔄 Modo treinamento adicional ativado!")
+		}
+	}
+
+	if shouldTrain {
+		if modelLoaded {
+			log.Printf("\nContinuando treinamento: %d épocas já treinadas", transformerMdl.EpochsTrained)
+			log.Printf("Adicionando %d novas épocas...\n", cfg.Training.Epochs)
+		} else {
+			log.Printf("\nIniciando treinamento Transformer: %d épocas, lr=%.4f, batch=%d\n",
+				cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize)
+		}
+
+		trainTransformer(transformerMdl, content, cfg)
+
+		// Salvar modelo Transformer
+		if err := transformerMdl.SaveModel(cfg.Paths.ModelPath); err != nil {
+			log.Printf("Erro ao salvar modelo Transformer: %v\n", err)
+		} else {
+			log.Printf("\n✅ Modelo Transformer salvo em %s", cfg.Paths.ModelPath)
+			log.Printf("Total de épocas treinadas: %d", transformerMdl.EpochsTrained)
+			log.Println("💡 Use './lmcs-llm' para carregar o modelo ou './lmcs-llm --train' para treinar mais\n")
 		}
 	} else {
-		// Usar modelo antigo (softmax regression)
-		if _, err := os.Stat(cfg.Paths.ModelPath); err == nil {
-			log.Printf("Carregando modelo existente de %s...\n", cfg.Paths.ModelPath)
-			mdl, err = model.Load(cfg.Paths.ModelPath)
-			if err != nil {
-				log.Fatalf("Erro ao carregar modelo: %v\n", err)
-			}
-			log.Println("Modelo carregado com sucesso!")
-		} else {
-			mdl = model.New(content, cfg.Training.ContextSize)
-		}
-
-		// Treinar modelo
-		mdl.Train(
-			content,
-			cfg.Training.Epochs,
-			cfg.Training.LearningRate,
-			cfg.Training.BatchSize,
-		)
-
-		// Salvar modelo treinado
-		if err := mdl.Save(cfg.Paths.ModelPath); err != nil {
-			log.Printf("Erro ao salvar modelo: %v\n", err)
-		} else {
-			log.Printf("Modelo salvo em %s\n", cfg.Paths.ModelPath)
-		}
+		log.Println("\n✅ Modelo já treinado carregado. Pronto para uso!")
+		log.Printf("📊 Status: %d épocas treinadas", transformerMdl.EpochsTrained)
+		log.Println("💡 Use './lmcs-llm --train' para adicionar mais épocas de treinamento")
 	}
 
 	// Configurar servidor HTTP
 	mux := http.NewServeMux()
-
-	if cfg.Training.UseLSTM && lstmMdl != nil {
-		handler := api.NewLstmHandler(lstmMdl)
-		handler.RegisterRoutes(mux)
-	} else {
-		handler := api.NewHandler(mdl)
-		handler.RegisterRoutes(mux)
-	}
+	handler := api.NewHandler(transformerMdl)
+	handler.RegisterRoutes(mux)
 
 	log.Printf("Servidor rodando em http://%s%s\n", cfg.Server.Host, cfg.Server.Port)
 	log.Println("Frontend: http://localhost" + cfg.Server.Port)
@@ -200,18 +172,18 @@ func main() {
 }
 
 // trainLstm treina o modelo LSTM com paralelismo
-func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
+// trainTransformer treina o modelo Transformer
+func trainTransformer(mdl *model.TransformerModel, content string, cfg *config.Config) {
 	startTime := time.Now()
-	chars := []rune(content)
-	totalLoss := 0.0
-	reportInterval := 5
 	initialLR := cfg.Training.LearningRate
 
-	log.Printf("Iniciando treinamento LSTM: %d épocas, lr=%.4f, batch=%d, context=%d, hidden=%d\n",
-		cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize, mdl.ContextSize, mdl.HiddenSize)
+	// Tokenizar todo o conteúdo
+	tokens := mdl.Tokenize(content)
+	totalTokens := len(tokens)
+	log.Printf("Dataset: %d tokens (vocab: %d)\n", totalTokens, len(mdl.Vocab))
 
 	for epoch := 1; epoch <= cfg.Training.Epochs; epoch++ {
-		// Learning rate scheduling: decay exponencial
+		// Learning rate scheduling
 		decayFactor := math.Pow(0.95, float64(epoch-1))
 		currentLR := initialLR * decayFactor
 		mdl.LearningRate = currentLR
@@ -219,41 +191,61 @@ func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
 		epochLoss := 0.0
 		samples := 0
 
-		// Processamento sequencial (sem race condition)
-		for i := 0; i < len(chars)-mdl.ContextSize-1; i += cfg.Training.BatchSize {
-			end := i + mdl.ContextSize
-			if end >= len(chars)-1 {
+		// Training loop com teacher forcing
+		for i := 0; i < totalTokens-cfg.Training.MaxSeqLen-1; i += cfg.Training.BatchSize {
+			seqEnd := i + cfg.Training.MaxSeqLen
+			if seqEnd >= totalTokens-1 {
 				break
 			}
 
-			inputs := make([]int, 0, mdl.ContextSize)
-			for j := i; j < end; j++ {
-				if id, ok := mdl.CharToID[chars[j]]; ok {
-					inputs = append(inputs, id)
+			inputSeq := tokens[i:seqEnd]
+			targetToken := tokens[seqEnd]
+
+			// Forward pass
+			output := mdl.Forward(inputSeq)
+
+			// Calcular loss na última posição
+			seqLen := output.RawMatrix().Rows
+			lastRow := make([]float64, mdl.DModel)
+			for j := 0; j < mdl.DModel; j++ {
+				lastRow[j] = output.At(seqLen-1, j)
+			}
+
+			// Calcular logits
+			logits := make([]float64, mdl.VocabSize)
+			for v := 0; v < mdl.VocabSize; v++ {
+				logits[v] = mdl.BOut.At(v, 0)
+				for j := 0; j < mdl.DModel; j++ {
+					logits[v] += mdl.WOut.At(v, j) * lastRow[j]
 				}
 			}
 
-			if len(inputs) == 0 {
-				continue
-			}
-
-			targetChar := chars[end]
-			target, ok := mdl.CharToID[targetChar]
-			if !ok {
-				continue
-			}
-
-			loss := mdl.Train(inputs, target)
+			// Cross-entropy loss
+			probs := model.Softmax(logits)
+			loss := model.CrossEntropyLoss(probs, targetToken)
 			epochLoss += loss
+
+			// Update pesos (simplified gradient descent)
+			for v := 0; v < mdl.VocabSize; v++ {
+				grad := probs[v]
+				if v == targetToken {
+					grad -= 1.0
+				}
+				// Update output weights
+				for j := 0; j < mdl.DModel; j++ {
+					mdl.WOut.Set(v, j, mdl.WOut.At(v, j)-currentLR*grad*lastRow[j]*0.01)
+				}
+				mdl.BOut.Set(v, 0, mdl.BOut.At(v, 0)-currentLR*grad*0.01)
+			}
+
 			samples++
 		}
 
 		if samples > 0 {
 			avgLoss := epochLoss / float64(samples)
-			totalLoss = avgLoss
 
 			// Reportar progresso
-			if epoch%reportInterval == 0 || epoch == 1 {
+			if epoch%5 == 0 || epoch == 1 {
 				elapsed := time.Since(startTime)
 				log.Printf("Época %d/%d - Loss: %.4f | LR: %.6f | Samples: %d | Tempo: %s\n",
 					epoch, cfg.Training.Epochs, avgLoss, currentLR, samples, elapsed)
@@ -261,9 +253,7 @@ func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
 		}
 	}
 
-	log.Printf("Treinamento LSTM concluído! Loss final: %.4f\n", totalLoss)
-
-	// Incrementar contador de épocas treinadas
+	log.Printf("Treinamento Transformer concluído!\n")
 	mdl.EpochsTrained += cfg.Training.Epochs
 	log.Printf("Total de épocas treinadas (acumulado): %d\n", mdl.EpochsTrained)
 }
@@ -276,7 +266,8 @@ func printHelp() {
 Uso:
   ./lmcs-llm                  Iniciar servidor (treina se não houver modelo)
   ./lmcs-llm --train          Treinar mais épocas (incremental)
-  ./lmcs-llm -d               Baixar dataset do HuggingFace
+  ./lmcs-llm -d               Baixar dataset simples do HuggingFace
+  ./lmcs-llm -de              Baixar dataset enriquecido COM metadados (RECOMENDADO)
   ./lmcs-llm --help           Mostrar esta ajuda
 
 Exemplos:
