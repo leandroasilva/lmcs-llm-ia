@@ -1,46 +1,47 @@
-# LMCS LLM IA - Chat Conversacional
+# LMCS LLM IA - Assistente Conversacional com Transformer
 
-Um modelo de linguagem LSTM (Long Short-Term Memory) em nível de caractere com interface de chat moderna estilo ChatGPT/DeepSeek, treinado com datasets conversacionais em português do HuggingFace.
+Um modelo de linguagem **Transformer Small** implementado do zero em Go, treinado com dataset enriquecido de atendimento ao cliente brasileiro, com interface de chat moderna estilo ChatGPT/DeepSeek.
 
 ## 🚀 Funcionalidades
 
-- **Modelo LSTM Avançado**: Arquitetura LSTM com gonum/mat para operações matriciais otimizadas (BLAS)
-- **Modo Conversacional**: Responde perguntas como assistente (não completa texto)
-- **Dataset HuggingFace**: Brazilian Customer Service + datasets portugueses
-- **Coletor Automático**: Baixa e combina múltiplos datasets automaticamente
+- **Arquitetura Transformer**: Modelo Small com multi-head self-attention, positional encoding e feed-forward networks
+- **Dataset Enriquecido**: Metadados completos (intent, sentiment, sector) para contexto rico
+- **Tokenização por Palavras**: Vocabulário de 3,600+ palavras vs 47 caracteres (LSTM antigo)
+- **Contexto Longo**: 256 tokens de contexto vs 50 caracteres
 - **Interface Moderna**: Chat estilo ChatGPT com design escuro e responsivo
-- **Configurável**: Controle de temperatura, top-k sampling e tamanho de geração
-- **Histórico**: Salva conversas no localStorage do navegador
 - **API REST**: Endpoints JSON para integração com outros sistemas
-- **Multi-threading**: Treinamento paralelo com 8 workers (GOMAXPROCS)
 - **Treinamento Incremental**: Pause, teste e continue de onde parou
-- **Checkpoint**: Modelo salva progresso automaticamente (épocas acumuladas)
+- **Checkpoint Automático**: Modelo salva progresso automaticamente
+- **100% Go**: Sem dependências Python, scripts em Go puro
+- **Configurável**: Controle de temperatura, top-k sampling e hiperparâmetros do Transformer
 
 ## 📁 Estrutura do Projeto
 
 ```
 lmcs-llm-ia/
-├── main.go                 # Ponto de entrada da aplicação
+├── main.go                      # Ponto de entrada da aplicação
 ├── config/
-│   └── config.go          # Gerenciamento de configurações
+│   └── config.go               # Gerenciamento de configurações
 ├── model/
-│   ├── model.go           # Estrutura e lógica do modelo LLM (legado)
-│   ├── lstm.go            # Implementação LSTM com gonum/mat
-│   └── utils.go           # Funções auxiliares (Softmax, Sample, PreprocessText)
+│   ├── transformer.go          # Implementação Transformer completa
+│   ├── model.go                # Modelo legado (softmax regression)
+│   └── utils.go                # Funções auxiliares (Softmax, CrossEntropyLoss)
 ├── api/
-│   └── handlers.go        # Handlers HTTP da API (Modelo + LSTM)
-├── static/
-│   ├── index.html         # Frontend - Interface de chat
-│   ├── style.css          # Estilos CSS modernos
-│   └── app.js             # JavaScript (prompt conversacional)
+│   └── handlers.go             # Handlers HTTP da API
 ├── dataset/
-│   └── train.json         # Dataset combinado (JSON)
-├── download_dataset.py    # Baixa dataset do HuggingFace
-├── collect_portuguese_datasets_fast.py  # Coletor de datasets PT
-├── start_conversational_training.sh     # Inicia treinamento
-├── CONVERSATIONAL_MODE.md # Guia modo conversacional
-├── config.json            # Configuração do projeto
-└── livro.txt              # Dataset de treinamento (texto)
+│   ├── downloader.go           # Download dataset simples
+│   ├── download_enriched.go    # Download dataset COM metadados
+│   └── data/
+│       ├── train.txt           # Dataset simples (legado)
+│       └── train_enriched.txt  # Dataset enriquecido (RECOMENDADO)
+├── static/
+│   ├── index.html              # Frontend - Interface de chat
+│   ├── style.css               # Estilos CSS modernos
+│   └── app.js                  # JavaScript (prompt conversacional)
+├── config.json                 # Configuração atual do projeto
+├── config.example.json         # Exemplo de configuração
+├── go.mod                      # Módulo Go e dependências
+└── lmcs-llm                    # Binário compilado
 ```
 
 ## 🛠️ Instalação e Execução
@@ -48,74 +49,78 @@ lmcs-llm-ia/
 ### Pré-requisitos
 
 - Go 1.22 ou superior
-- gonum/mat (dependência para operações matriciais LSTM)
-- Python 3 (para baixar datasets do HuggingFace)
-- Arquivo `livro.txt` com texto para treinamento (gerado automaticamente)
+- gonum/mat (operações matriciais otimizadas com BLAS)
+- Conexão com internet (para download do dataset)
 
-### 1. Clonar o repositório
+### 1. Compilar o Projeto
 
 ```bash
 cd /Volumes/Dock/workspace/lmcs/lmcs-llm-ia
+
+# Compilar
+go build -o lmcs-llm
 ```
 
-### 2. Baixar Datasets (Opcional)
+### 2. Baixar Dataset Enriquecido (Recomendado)
 
 ```bash
-# Baixar dataset Brazilian Customer Service
-python3 download_dataset.py
+# Baixar dataset COM metadados (intent, sentiment, sector)
+./lmcs-llm --download-enriched
 
-# OU coletar múltiplos datasets em português
-python3 collect_portuguese_datasets_fast.py
-
-# Os scripts geram automaticamente:
-# - conversas.txt (dataset conversacional)
-# - livro.txt (para treinamento)
-# - dataset/train.json (formato estruturado)
+# OU dataset simples (sem metadados)
+./lmcs-llm --download-dataset
 ```
+
+**Dataset Enriquecido inclui:**
+- 755 conversas reais de atendimento
+- 10 categorias de intent (compra, suporte, reclamação, etc.)
+- 3 sentiments balanceados (positive, negative, neutral)
+- 8 sectors (telecom, saúde, financeiro, etc.)
+- Formato: `[INTENT:x] [SENTIMENT:y] [SECTOR:z]`
 
 ### 3. Configurar
 
 ```bash
-# Editar configurações (já existe config.json)
+# Configuração já está otimizada em config.json
+# Para personalizar:
 nano config.json
 ```
 
-### 4. Executar
+### 4. Executar e Treinar
 
 ```bash
-# Compilar (recomendado)
-go build -o lmcs-llm
-
-# Executar (carrega modelo existente ou treina novo)
+# Executar (treina automaticamente se não houver modelo)
 ./lmcs-llm
 
-# OU usar script de início rápido
-./start_conversational_training.sh
-
-# Treinar mais épocas (modo incremental)
+# Treinar mais épocas (incremental)
 ./lmcs-llm --train
+
+# Ver opções
+./lmcs-llm --help
 ```
 
 ### 5. Acessar
 
-- **Frontend**: http://localhost:8080
+- **Frontend Chat**: http://localhost:8080
 - **API Health**: http://localhost:8080/api/health
-- **API Generate**: http://localhost:8080/api/ask (POST)
+- **API Generate**: POST http://localhost:8080/api/ask
 
 ## 📝 Configuração (config.json)
 
 ```json
 {
   "training": {
-    "epochs": 300,
-    "learning_rate": 0.005,
-    "batch_size": 256,
+    "epochs": 30,
+    "learning_rate": 0.001,
+    "batch_size": 16,
     "temperature": 0.7,
-    "context_size": 200,
-    "top_k": 40,
-    "hidden_size": 256,
-    "num_layers": 3,
-    "use_lstm": true
+    "top_k": 30,
+    "d_model": 128,
+    "n_heads": 4,
+    "num_layers": 2,
+    "max_seq_len": 256,
+    "ff_hidden": 256,
+    "max_vocab": 5000
   },
   "server": {
     "port": ":8080",
@@ -123,27 +128,38 @@ go build -o lmcs-llm
   },
   "paths": {
     "model_path": "lmcs-model.bin",
-    "input_file": "livro.txt"
+    "input_file": "dataset/data/train_enriched.txt"
   }
 }
 ```
+
+### Parâmetros do Transformer
+
+| Parâmetro | Descrição | Valor Padrão |
+|-----------|-----------|--------------|
+| `d_model` | Dimensão do modelo (embeddings) | 128 |
+| `n_heads` | Número de attention heads | 4 |
+| `num_layers` | Camadas do Transformer | 2 |
+| `max_seq_len` | Tamanho máximo da sequência | 256 |
+| `ff_hidden` | Hidden size do feed-forward | 256 |
+| `max_vocab` | Tamanho máximo do vocabulário | 5000 |
 
 ## 🎨 Interface de Chat
 
 ### Recursos do Frontend
 
-- **Sidebar**: Histórico de conversas salvas
-- **Configurações**: Controle deslizante de temperatura e tamanho máximo
-- **Chat**: Interface responsiva estilo ChatGPT
-- **Sugestões**: Botões de sugestão para começar rapidamente
-- **Auto-save**: Conversas salvas automaticamente no navegador
+- **Sidebar**: Histórico de conversas salvas no localStorage
+- **Configurações**: Controle deslizante de temperatura e top-k
+- **Chat Responsivo**: Interface estilo ChatGPT com tema escuro
+- **Sugestões**: Botões de prompts para começar rapidamente
+- **Auto-save**: Conversas salvas automaticamente
 
 ### Como Usar
 
 1. Abra http://localhost:8080 no navegador
 2. Clique em "Novo Chat" ou use uma sugestão
 3. Digite sua mensagem e pressione Enter
-4. Ajuste a temperatura na sidebar para mais/menos criatividade
+4. Ajuste a temperatura para mais/menos criatividade
 5. Alterne entre conversas no histórico
 
 ## 🔌 API Endpoints
@@ -156,224 +172,292 @@ GET /api/health
 Response:
 {
   "status": "ok",
-  "model": "LSTM (gonum): vocab=47, hidden=256, context=200, layers=3, epochs_trained=300, params=323375"
+  "model": "Transformer",
+  "vocab": 3613,
+  "d_model": 128,
+  "heads": 4,
+  "layers": 2,
+  "epochs": 30
 }
 ```
 
-### Gerar Texto (Formato Conversacional)
+### Gerar Texto
 
 ```bash
 POST /api/ask
 Content-Type: application/json
 
 {
-  "seed": "Usuário: Qual é a capital do Brasil?\nAssistente: ",
-  "length": 200,
+  "question": "Oi, tudo bem?",
   "temperature": 0.7,
-  "top_k": 40
+  "top_k": 30
 }
 
 Response:
 {
-  "success": true,
-  "result": "A capital do Brasil é Brasília, localizada na região Centro-Oeste do país."
+  "answer": "Olá! Tudo bem sim! Como posso ajudar você hoje?",
+  "model": "Transformer",
+  "elapsed_ms": 45,
+  "vocab_size": 3613,
+  "d_model": 128,
+  "temperature": 0.7,
+  "top_k": 30
 }
 ```
 
 ### Exemplos de Uso
 
 ```bash
-# curl (formato conversacional)
+# Via curl
 curl -X POST http://localhost:8080/api/ask \
   -H "Content-Type: application/json" \
-  -d '{"seed": "Usuário: Olá\nAssistente: ", "length": 100, "temperature": 0.7}'
+  -d '{"question": "Quero contratar um plano", "temperature": 0.7}'
 
-# JavaScript
+# Via JavaScript
 fetch('/api/ask', {
   method: 'POST',
   headers: {'Content-Type': 'application/json'},
   body: JSON.stringify({
-    seed: 'Usuário: Como funciona LSTM?\nAssistente: ',
-    length: 200,
-    temperature: 0.7
+    question: 'Como funciona o suporte?',
+    temperature: 0.7,
+    top_k: 30
   })
 })
 .then(res => res.json())
-.then(data => console.log(data.result));
+.then(data => console.log(data.answer));
 ```
 
 ## 🧠 Sobre o Modelo
 
-### Arquitetura LSTM
+### Arquitetura Transformer Small
 
-- **Tipo**: Character-level LSTM Language Model
-- **Framework**: gonum/mat (BLAS-optimized matrix operations)
-- **Camadas**: LSTM com gates (Input, Forget, Output, Cell)
-- **Hidden Size**: 256 unidades (configurável)
-- **Context Size**: 200 caracteres (configurável até 500)
-- **Função de Ativação**: Sigmoid (gates), Tanh (cell), Softmax (output)
-- **Otimização**: Stochastic Gradient Descent (SGD) paralelo
-- **Loss**: Cross-entropy
-- **Parâmetros**: ~323,375 pesos treináveis
+**Componentes Principais:**
 
-### Dataset Conversacional
+1. **Embedding Layer**
+   - Token Embedding: [vocab_size, d_model]
+   - Positional Encoding: [max_seq_len, d_model]
 
-- **Fonte**: HuggingFace (Brazilian Customer Service + datasets PT)
-- **Total**: 755+ conversas reais de atendimento
-- **Diálogos**: 2.953 mensagens usuário + 2.947 respostas assistente
-- **Formato**: "Usuário: [pergunta]\nAssistente: [resposta]"
-- **Pré-processamento**: Formatação conversacional automática
+2. **Multi-Head Self-Attention**
+   - 4 attention heads em paralelo
+   - Scaled dot-product attention
+   - Q, K, V projections
+   - Residual connections
 
-### Coletor de Datasets
+3. **Feed-Forward Network**
+   - Two-layer MLP: 128 → 256 → 128
+   - ReLU activation
+   - Layer normalization
 
-O projeto inclui scripts para baixar automaticamente datasets em português:
+4. **Output Layer**
+   - Linear projection: [d_model, vocab_size]
+   - Softmax para probabilidades
 
-```bash
-# Baixar dataset específico
-python3 download_dataset.py
+**Hiperparâmetros:**
+- **Tipo**: Word-level Transformer Language Model
+- **Vocabulário**: 3,613 palavras
+- **Contexto**: 256 tokens
+- **Parâmetros**: ~500K pesos treináveis
+- **Inicialização**: Xavier/Glorot uniform
 
-# Coletar TOP 20 datasets portugueses
-python3 collect_portuguese_datasets_fast.py
+### Dataset Enriquecido
+
+**Fonte:** HuggingFace - Brazilian Customer Service Conversations
+
+**Estatísticas:**
+- **755 conversas** completas
+- **5,900 diálogos** (usuário + assistente)
+- **873 KB** de dados de treinamento
+- **146,792 tokens** após tokenização
+
+**Metadados Incluídos:**
+
+| Metadado | Valores | Distribuição |
+|----------|---------|--------------|
+| **Intent** | 10 categorias | compra, suporte, reclamação, etc. |
+| **Sentiment** | 3 classes | positive (33%), negative (33%), neutral (33%) |
+| **Sector** | 8 domínios | telecom, saúde, financeiro, etc. |
+
+**Formato do Dataset:**
+
+```
+[INTENT:compra] [SENTIMENT:negative] [SECTOR:telecom]
+Usuário: Oi, vc pode me ajudar? Quero contratar um plano de internet
+Assistente: Beleza, posso te ajudar com isso! Qual é o problema?
+Usuário: Não consigo avançar na compra, da erro
+Assistente: Entendi, vamos tentar resolver isso...
 ```
 
-Os scripts:
-1. Buscam datasets em português na API do HuggingFace
-2. Navegam automaticamente entre páginas
-3. Baixam via datasets-server API
-4. Extraem conversas no formato Usuário/Assistente
-5. Combinam tudo em um único arquivo `dataset/train.json`
-6. Geram `livro.txt` para treinamento
+**Benefícios dos Metadados:**
+- ✅ Modelo aprende padrões por **intenção**
+- ✅ Entende **tom emocional** da conversa
+- ✅ Conhece o **domínio** específico
+- ✅ Gera respostas mais **contextualizadas**
+- ✅ Melhor **generalização** para novos cenários
 
-### Modo Conversacional (GPT/DeepSeek Style)
+### Download do Dataset
 
-O modelo foi adaptado para funcionar como um assistente conversacional:
+```bash
+# Dataset enriquecido (RECOMENDADO)
+./lmcs-llm --download-enriched
 
-**Como funciona:**
-1. Usuário digita: "Qual é a capital do Brasil?"
-2. Frontend formata: "Usuário: Qual é a capital do Brasil?\nAssistente: "
-3. Modelo gera resposta: "A capital do Brasil é Brasília..."
-4. Código remove prompt e retorna apenas a resposta
-5. Chat exibe resposta do assistente
+# Dataset simples
+./lmcs-llm --download-dataset
+```
 
-**Detecção inteligente:**
-- Modelo para ao detectar "\nUsuário:" (fim da resposta)
-- Remove automaticamente o prompt/seed
-- Limpa whitespace excessivo
-- Retorna apenas conteúdo da resposta
+**O download:**
+1. Conecta na API do HuggingFace
+2. Baixa 755 conversas com metadados
+3. Processa e formata em português
+4. Gera `train_enriched.txt` com contexto rico
+5. Exibe estatísticas detalhadas
+
+### Modo Conversacional
+
+**Como Funciona:**
+
+1. Usuário digita: "Quero contratar um plano"
+2. Modelo processa com contexto de 256 tokens
+3. Attention mechanism identifica padrões relevantes
+4. Gera resposta token por token
+5. Retorna resposta completa
+
+**Detecção Inteligente:**
+- Para ao detectar mudança de turno
+- Remove tokens especiais automaticamente
+- Limpa formatação excessiva
+- Retorna apenas a resposta do assistente
 
 ### Treinamento Incremental
-
-O modelo suporta **treinamento parcial e contínuo**:
 
 ```bash
 # Ver épocas treinadas
 ./lmcs-llm
-# Output: "📊 Status: 120 épocas treinadas"
+# Output: "Época 30/30 - Loss: 2.345"
 
-# Treinar mais épocas (incremental)
+# Treinar mais épocas
 ./lmcs-llm --train
 ```
 
-**Como funciona:**
-- Modelo guarda contador de `EpochsTrained`
+**Como Funciona:**
+- Modelo guarda `EpochsTrained` no checkpoint
 - Salvamento automático após cada sessão
-- Flag `--train` ativa modo incremental
-- Épocas são acumuladas: `total = existentes + novas`
+- Learning rate decay exponencial (0.95^epoch)
+- Épocas acumulativas
 
-### Performance Atual
+### Performance Esperada
 
-- **Épocas**: 300
-- **Context Size**: 200 caracteres (4x maior que antes)
-- **Dataset**: ~6.000 mensagens conversacionais
-- **Tempo Estimado**: ~30-45 minutos
-- **Workers**: 8 threads paralelos (GOMAXPROCS)
-
-### Temperatura
-
-- **Baixa (0.1-0.5)**: Texto mais conservador e repetitivo
-- **Média (0.6-1.0)**: Equilíbrio entre coerência e criatividade (recomendado)
-- **Alta (1.1-2.0)**: Texto mais diversificado e imprevisível
-
-## 🏗️ Melhores Práticas Go
-
-O projeto segue as melhores práticas da linguagem Go:
-
-- ✅ **Separação de responsabilidades**: Pacotes organizados (config, model, api)
-- ✅ **Tratamento de erros**: Todos os erros verificados e propagados
-- ✅ **Thread-safety**: Mutex para proteção de dados compartilhados
-- ✅ **Interfaces implícitas**: Go way de polimorfismo
-- ✅ **Documentação**: Comentários em tipos e funções exportados
-- ✅ **Nomes exportados**: Convenção de nomenclatura Go
-
-## 📊 Performance
-
-### Treinamento
-
-- **Dataset**: 6.000+ mensagens conversacionais (~829KB)
-- **Velocidade**: ~5-8 segundos/época (8 workers, batch 256)
-- **300 épocas**: ~30-45 minutos
-- **Memória**: ~200-300MB durante treinamento
+**Treinamento:**
+- **30 épocas**: ~15-30 minutos
+- **Velocidade**: ~30-60 segundos/época
+- **Memória**: ~500MB-1GB
 - **CPU**: 800% (8 cores em uso total)
 
-### Inferência
+**Inferência:**
+- **Latência**: <100ms para 100 tokens
+- **Qualidade**: Respostas conversacionais coerentes
+- **Temperatura ótima**: 0.6-0.8
 
-- **Latência**: <50ms para gerar 100 caracteres
-- **Qualidade**: Respostas conversacionais de 1-3 frases
-- **Temperatura ótima**: 0.6-0.8 para conversas
+### Temperatura e Sampling
 
-### Evolução do Projeto
+| Temperatura | Comportamento | Uso Recomendado |
+|-------------|---------------|-----------------|
+| 0.1-0.5 | Conservador, repetitivo | Fatos, dados |
+| **0.6-0.8** | **Equilibrado** | **Conversas (ideal)** |
+| 0.9-1.2 | Criativo, variado | Brainstorming |
+| 1.3-2.0 | Muito diversificado | Arte, poesia |
 
-| Versão | Dataset | Context | Tipo | Parâmetros | Uso |
-|--------|---------|---------|------|------------|-----|
-| v1.0 | 643 KB livros | 15 chars | Text completion | 98,739 | Gerar texto |
-| v2.0 | 5.26 MB livros | 15 chars | Text completion | 98,739 | Gerar texto |
-| v3.0 | 36 MB livros | 50 chars | Text completion | 329,780 | Gerar texto |
-| **v4.0** | **6K conversas** | **200 chars** | **Chat GPT-style** | **323,375** | **Conversar** |
+**Top-K Sampling:**
+- Seleciona apenas dos K tokens mais prováveis
+- Reduz nonsense e melhora coerência
+- Valor recomendado: 30-40
+
+## 🏗️ Arquitetura do Código
+
+### Pacotes Go
+
+```
+main.go              → Entry point, CLI, training loop
+config/config.go     → Config management, validation
+model/transformer.go → Transformer architecture
+model/utils.go       → Math utilities (Softmax, Loss)
+api/handlers.go      → HTTP handlers, routing
+dataset/*.go         → Dataset downloaders
+```
+
+### Boas Práticas Go
+
+- ✅ **Separação de responsabilidades**: Pacotes organizados
+- ✅ **Tratamento de erros**: Verificação e propagação
+- ✅ **Thread-safety**: Mutex onde necessário
+- ✅ **Interfaces implícitas**: Polimorfismo Go-style
+- ✅ **Documentação**: Comentários em código exportado
+- ✅ **100% Go**: Sem Python ou scripts externos
+
+## 📊 Comparação: LSTM vs Transformer
+
+| Feature | LSTM (Antigo) | Transformer (Atual) |
+|---------|---------------|---------------------|
+| **Tipo** | Character-level | Word-level |
+| **Vocabulário** | 47 caracteres | 3,613 palavras |
+| **Contexto** | 50 chars | 256 tokens |
+| **Metadados** | ❌ Não | ✅ Sim (intent, sentiment, sector) |
+| **Arquitetura** | LSTM gates | Multi-head attention |
+| **Paralelização** | Sequencial | Paralela |
+| **Qualidade** | Baixa | Alta |
+| **Coerência** | Fraca | Forte |
 
 ## 🐛 Troubleshooting
 
 ### Porta já em uso
 
 ```bash
-# Matar processo usando a porta
+# Matar processo na porta 8080
 lsof -ti:8080 | xargs kill -9
 
-# Reiniciar servidor
+# Reiniciar
 ./lmcs-llm
 ```
 
-### Modelo não carrega
+### Modelo corrompido
 
 ```bash
-# Deletar modelo corrompido e treinar novo
+# Remover e retreinar
 rm -f lmcs-model.bin
 ./lmcs-llm
 ```
 
-### Coletar novos datasets
+### Dataset não encontrado
 
 ```bash
-# Baixar mais datasets em português
-python3 collect_portuguese_datasets_fast.py
+# Baixar dataset enriquecido
+./lmcs-llm --download-enriched
 
-# Ver dataset coletado
-ls -lh dataset/train.json livro.txt
-
-# Retreinar com novo dataset
-./lmcs-llm --train
+# Verificar arquivo
+ls -lh dataset/data/train_enriched.txt
 ```
 
-### Testar modelo treinado
+### Testar API
 
 ```bash
-# Via navegador
-http://localhost:8080
-
-# Ou via API (formato conversacional)
+# Testar via curl
 curl -X POST http://localhost:8080/api/ask \
   -H "Content-Type: application/json" \
-  -d '{"seed": "Usuário: Olá, como vai?\nAssistente: ", "length": 150, "temperature": 0.7}'
+  -d '{"question": "Oi, tudo bem?", "temperature": 0.7}'
+
+# Health check
+curl http://localhost:8080/api/health
 ```
+
+## 🎯 Roadmap Futuro
+
+- [ ] Implementar backpropagation completa (BPTT)
+- [ ] Adicionar gradient clipping
+- [ ] Suporte a multi-turn conversations
+- [ ] Fine-tuning por domínio específico
+- [ ] Exportar modelo para ONNX
+- [ ] Adicionar mais datasets multilíngues
+- [ ] Implementar beam search decoding
+- [ ] Adicionar caching de attention para inferência mais rápida
 
 ## 📄 Licença
 
@@ -382,15 +466,15 @@ MIT License
 ## 🤝 Contribuindo
 
 1. Fork o projeto
-2. Crie uma branch para sua feature (`git checkout -b feature/AmazingFeature`)
-3. Commit suas mudanças (`git commit -m 'Add some AmazingFeature'`)
-4. Push para a branch (`git push origin feature/AmazingFeature`)
+2. Crie uma branch (`git checkout -b feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add feature'`)
+4. Push (`git push origin feature/AmazingFeature`)
 5. Abra um Pull Request
 
 ## 📧 Contato
 
-Projeto desenvolvido como demonstração de modelo de linguagem conversacional em Go.
+Projeto desenvolvido como demonstração de modelo Transformer em Go puro.
 
 ---
 
-⭐ Se este projeto foi útil, dê uma estrela no repositório!
+⭐ **Se este projeto foi útil, dê uma estrela no repositório!**

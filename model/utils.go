@@ -31,6 +31,19 @@ func Softmax(x []float64) []float64 {
 	return res
 }
 
+// CrossEntropyLoss calcula a perda de cross-entropy
+func CrossEntropyLoss(probs []float64, target int) float64 {
+	if target < 0 || target >= len(probs) {
+		return 0.0
+	}
+	// -log(p_target)
+	p := probs[target]
+	if p <= 0 {
+		return 10.0 // Large penalty for zero probability
+	}
+	return -math.Log(p)
+}
+
 // Sample amostra um índice baseado nas probabilidades
 func Sample(probs []float64) int {
 	r := rand.Float64()

@@ -19,14 +19,11 @@ type TrainingConfig struct {
 	LearningRate float64 `json:"learning_rate"`
 	BatchSize    int     `json:"batch_size"`
 	Temperature  float64 `json:"temperature"`
-	ContextSize  int     `json:"context_size"` // Tamanho do contexto
-	TopK         int     `json:"top_k"`        // Top-K sampling
-	HiddenSize   int     `json:"hidden_size"`  // Tamanho da camada oculta (LSTM)
-	NumLayers    int     `json:"num_layers"`   // Número de camadas
-	UseLSTM      bool    `json:"use_lstm"`     // Usar arquitetura LSTM
+	TopK         int     `json:"top_k"` // Top-K sampling
 	// Transformer
 	DModel    int `json:"d_model"`     // Dimension do modelo
 	NHeads    int `json:"n_heads"`     // Número de attention heads
+	NumLayers int `json:"num_layers"`  // Número de transformer layers
 	MaxSeqLen int `json:"max_seq_len"` // Tamanho máximo da sequência
 	FFHidden  int `json:"ff_hidden"`   // Hidden size do feed-forward
 	MaxVocab  int `json:"max_vocab"`   // Tamanho máximo do vocabulário
@@ -48,15 +45,17 @@ type PathsConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Training: TrainingConfig{
-			Epochs:       100,
+			Epochs:       30,
 			LearningRate: 0.001,
-			BatchSize:    32,
+			BatchSize:    16,
 			Temperature:  0.7,
-			ContextSize:  15,
-			TopK:         40,
-			HiddenSize:   128,
-			NumLayers:    1,
-			UseLSTM:      true,
+			TopK:         30,
+			DModel:       128,
+			NHeads:       4,
+			NumLayers:    2,
+			MaxSeqLen:    256,
+			FFHidden:     256,
+			MaxVocab:     5000,
 		},
 		Server: ServerConfig{
 			Port: ":8080",
@@ -64,7 +63,7 @@ func DefaultConfig() *Config {
 		},
 		Paths: PathsConfig{
 			ModelPath: "lmcs-model.bin",
-			InputFile: "dataset/data/train.txt",
+			InputFile: "dataset/data/train_enriched.txt",
 		},
 	}
 }
@@ -112,14 +111,27 @@ func (c *Config) Validate() error {
 	if c.Training.Temperature <= 0 || c.Training.Temperature > 2.0 {
 		return fmt.Errorf("temperature deve estar entre 0 e 2")
 	}
-	if c.Training.ContextSize <= 0 || c.Training.ContextSize > 500 {
-		return fmt.Errorf("context_size deve estar entre 1 e 500")
-	}
-	if c.Training.NumLayers <= 0 || c.Training.NumLayers > 5 {
-		return fmt.Errorf("num_layers deve estar entre 1 e 5")
-	}
 	if c.Training.TopK <= 0 || c.Training.TopK > 100 {
 		return fmt.Errorf("top_k deve estar entre 1 e 100")
+	}
+	// Transformer validations
+	if c.Training.DModel <= 0 {
+		return fmt.Errorf("d_model deve ser maior que 0")
+	}
+	if c.Training.NHeads <= 0 {
+		return fmt.Errorf("n_heads deve ser maior que 0")
+	}
+	if c.Training.NumLayers <= 0 || c.Training.NumLayers > 12 {
+		return fmt.Errorf("num_layers deve estar entre 1 e 12")
+	}
+	if c.Training.MaxSeqLen <= 0 || c.Training.MaxSeqLen > 1024 {
+		return fmt.Errorf("max_seq_len deve estar entre 1 e 1024")
+	}
+	if c.Training.FFHidden <= 0 {
+		return fmt.Errorf("ff_hidden deve ser maior que 0")
+	}
+	if c.Training.MaxVocab <= 0 {
+		return fmt.Errorf("max_vocab deve ser maior que 0")
 	}
 	if c.Server.Port == "" {
 		return fmt.Errorf("port não pode estar vazio")
