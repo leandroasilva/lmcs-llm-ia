@@ -12,11 +12,12 @@ import (
 
 // LstmModel representa um modelo de linguagem baseado em LSTM otimizado com gonum
 type LstmModel struct {
-	VocabSize    int
-	HiddenSize   int
-	ContextSize  int
-	NumLayers    int
-	LearningRate float64
+	VocabSize     int
+	HiddenSize    int
+	ContextSize   int
+	NumLayers     int
+	LearningRate  float64
+	EpochsTrained int // Número de épocas já treinadas
 
 	// Pesos do LSTM (matrizes otimizadas)
 	Wi, Ui, Bi *mat.Dense // Input gate
@@ -375,6 +376,6 @@ func (m *LstmModel) GetModelInfo() string {
 	r, c = m.By.Dims()
 	totalParams += r * c
 
-	return fmt.Sprintf("LSTM (gonum): vocab=%d, hidden=%d, context=%d, layers=%d, params=%d",
-		m.VocabSize, m.HiddenSize, m.ContextSize, m.NumLayers, totalParams)
+	return fmt.Sprintf("LSTM (gonum): vocab=%d, hidden=%d, context=%d, layers=%d, epochs_trained=%d, params=%d",
+		m.VocabSize, m.HiddenSize, m.ContextSize, m.NumLayers, m.EpochsTrained, totalParams)
 }

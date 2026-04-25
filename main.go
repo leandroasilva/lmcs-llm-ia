@@ -93,11 +93,25 @@ func main() {
 			log.Printf("Modelo LSTM criado: %s\n", lstmMdl.GetModelInfo())
 		}
 
-		// Treinar modelo LSTM apenas se for novo ou se configuração exigir retreinamento
-		if !modelLoaded {
-			log.Printf("Iniciando treinamento LSTM: %d épocas, lr=%.4f, batch=%d, context=%d, hidden=%d\n",
-				cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize,
-				cfg.Training.ContextSize, cfg.Training.HiddenSize)
+		// Treinar modelo LSTM
+		// Verificar se deve treinar (novo ou flag --train)
+		shouldTrain := !modelLoaded
+		for _, arg := range os.Args {
+			if arg == "--train" || arg == "-t" {
+				shouldTrain = true
+				log.Println("\n🔄 Modo treinamento adicional ativado!")
+			}
+		}
+
+		if shouldTrain {
+			if modelLoaded {
+				log.Printf("\nContinuando treinamento: %d épocas já treinadas", lstmMdl.EpochsTrained)
+				log.Printf("Adicionando %d novas épocas...\n", cfg.Training.Epochs)
+			} else {
+				log.Printf("\nIniciando treinamento LSTM: %d épocas, lr=%.4f, batch=%d, context=%d, hidden=%d\n",
+					cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize,
+					cfg.Training.ContextSize, cfg.Training.HiddenSize)
+			}
 
 			trainLstm(lstmMdl, content, cfg)
 
@@ -105,10 +119,14 @@ func main() {
 			if err := lstmMdl.SaveModel(cfg.Paths.ModelPath); err != nil {
 				log.Printf("Erro ao salvar modelo LSTM: %v\n", err)
 			} else {
-				log.Printf("Modelo LSTM salvo em %s\n", cfg.Paths.ModelPath)
+				log.Printf("\n✅ Modelo LSTM salvo em %s", cfg.Paths.ModelPath)
+				log.Printf("Total de épocas treinadas: %d", lstmMdl.EpochsTrained)
+				log.Printf("💡 Use './lmcs-llm' para carregar o modelo ou './lmcs-llm --train' para treinar mais\n")
 			}
 		} else {
-			log.Println("Modelo já treinado carregado. Pulando treinamento.")
+			log.Println("\n✅ Modelo já treinado carregado. Pronto para uso!")
+			log.Printf("📊 Status: %d épocas treinadas", lstmMdl.EpochsTrained)
+			log.Println("💡 Use './lmcs-llm --train' para adicionar mais épocas de treinamento")
 		}
 	} else {
 		// Usar modelo antigo (softmax regression)
@@ -277,4 +295,8 @@ func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
 	}
 
 	log.Printf("Treinamento LSTM concluído! Loss final: %.4f\n", totalLoss)
+
+	// Incrementar contador de épocas treinadas
+	mdl.EpochsTrained += cfg.Training.Epochs
+	log.Printf("Total de épocas treinadas (acumulado): %d\n", mdl.EpochsTrained)
 }
