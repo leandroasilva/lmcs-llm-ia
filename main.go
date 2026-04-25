@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"os"
 	"runtime"
@@ -203,23 +204,22 @@ func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
 	startTime := time.Now()
 	chars := []rune(content)
 	totalLoss := 0.0
-	reportInterval := 10
-	numWorkers := runtime.NumCPU()
+	reportInterval := 5
+	initialLR := cfg.Training.LearningRate
 
-	log.Printf("Iniciando treinamento LSTM: %d épocas, lr=%.4f, batch=%d, context=%d, hidden=%d, workers=%d\n",
-		cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize, mdl.ContextSize, mdl.HiddenSize, numWorkers)
+	log.Printf("Iniciando treinamento LSTM: %d épocas, lr=%.4f, batch=%d, context=%d, hidden=%d\n",
+		cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize, mdl.ContextSize, mdl.HiddenSize)
 
 	for epoch := 1; epoch <= cfg.Training.Epochs; epoch++ {
+		// Learning rate scheduling: decay exponencial
+		decayFactor := math.Pow(0.95, float64(epoch-1))
+		currentLR := initialLR * decayFactor
+		mdl.LearningRate = currentLR
+
 		epochLoss := 0.0
 		samples := 0
 
-		// Preparar todos os samples para processamento paralelo
-		type trainingSample struct {
-			inputs []int
-			target int
-		}
-
-		var samplesList []trainingSample
+		// Processamento sequencial (sem race condition)
 		for i := 0; i < len(chars)-mdl.ContextSize-1; i += cfg.Training.BatchSize {
 			end := i + mdl.ContextSize
 			if end >= len(chars)-1 {
@@ -243,60 +243,9 @@ func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
 				continue
 			}
 
-			samplesList = append(samplesList, trainingSample{inputs, target})
-		}
-
-		// Processar samples em paralelo usando goroutines
-		if numWorkers > 1 && len(samplesList) > 100 {
-			// Dividir samples entre workers
-			chunkSize := (len(samplesList) + numWorkers - 1) / numWorkers
-			workerLoss := make([]float64, numWorkers)
-			workerSamples := make([]int, numWorkers)
-			done := make(chan bool, numWorkers)
-
-			for w := 0; w < numWorkers; w++ {
-				start := w * chunkSize
-				end := start + chunkSize
-				if end > len(samplesList) {
-					end = len(samplesList)
-				}
-
-				if start >= len(samplesList) {
-					break
-				}
-
-				chunk := samplesList[start:end]
-				go func(workerID int, chunk []trainingSample) {
-					localLoss := 0.0
-					localSamples := 0
-					for _, sample := range chunk {
-						loss := mdl.Train(sample.inputs, sample.target)
-						localLoss += loss
-						localSamples++
-					}
-					workerLoss[workerID] = localLoss
-					workerSamples[workerID] = localSamples
-					done <- true
-				}(w, chunk)
-			}
-
-			// Esperar todos workers completarem
-			for w := 0; w < numWorkers; w++ {
-				<-done
-			}
-
-			// Agregar resultados
-			for w := 0; w < numWorkers; w++ {
-				epochLoss += workerLoss[w]
-				samples += workerSamples[w]
-			}
-		} else {
-			// Processamento sequencial para datasets pequenos
-			for _, sample := range samplesList {
-				loss := mdl.Train(sample.inputs, sample.target)
-				epochLoss += loss
-				samples++
-			}
+			loss := mdl.Train(inputs, target)
+			epochLoss += loss
+			samples++
 		}
 
 		if samples > 0 {
@@ -304,10 +253,10 @@ func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
 			totalLoss = avgLoss
 
 			// Reportar progresso
-			if epoch%reportInterval == 0 {
+			if epoch%reportInterval == 0 || epoch == 1 {
 				elapsed := time.Since(startTime)
-				log.Printf("Época %d/%d - Loss: %.4f | Tempo: %s\n",
-					epoch, cfg.Training.Epochs, avgLoss, elapsed)
+				log.Printf("Época %d/%d - Loss: %.4f | LR: %.6f | Samples: %d | Tempo: %s\n",
+					epoch, cfg.Training.Epochs, avgLoss, currentLR, samples, elapsed)
 			}
 		}
 	}
