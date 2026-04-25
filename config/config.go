@@ -58,7 +58,7 @@ func DefaultConfig() *Config {
 		},
 		Paths: PathsConfig{
 			ModelPath: "lmcs-model.bin",
-			InputFile: "livro.txt",
+			InputFile: "dataset/data/train.txt",
 		},
 	}
 }

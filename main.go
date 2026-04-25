@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -9,11 +10,28 @@ import (
 
 	"github.com/leandroasilva/lmcs-llm-ia/api"
 	"github.com/leandroasilva/lmcs-llm-ia/config"
+	"github.com/leandroasilva/lmcs-llm-ia/dataset"
 	"github.com/leandroasilva/lmcs-llm-ia/model"
 )
 
 func main() {
 	log.Println("=== LMCS LLM IA ===")
+
+	// Verificar parâmetros de linha de comando
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "--download-dataset", "-d":
+			log.Println("📥 Modo download de dataset")
+			if err := dataset.DownloadDataset(); err != nil {
+				log.Fatalf("Erro ao baixar dataset: %v\n", err)
+			}
+			log.Println("✅ Dataset baixado com sucesso!")
+			return
+		case "--help", "-h":
+			printHelp()
+			return
+		}
+	}
 
 	// Configurar número de threads/cores para máxima performance
 	numCPUs := runtime.NumCPU()
@@ -299,4 +317,36 @@ func trainLstm(mdl *model.LstmModel, content string, cfg *config.Config) {
 	// Incrementar contador de épocas treinadas
 	mdl.EpochsTrained += cfg.Training.Epochs
 	log.Printf("Total de épocas treinadas (acumulado): %d\n", mdl.EpochsTrained)
+}
+
+// printHelp exibe ajuda dos parâmetros
+func printHelp() {
+	fmt.Println(`
+🤖 LMCS LLM IA - Assistente Conversacional
+
+Uso:
+  ./lmcs-llm                  Iniciar servidor (treina se não houver modelo)
+  ./lmcs-llm --train          Treinar mais épocas (incremental)
+  ./lmcs-llm -d               Baixar dataset do HuggingFace
+  ./lmcs-llm --help           Mostrar esta ajuda
+
+Exemplos:
+  # Baixar dataset conversacional
+  ./lmcs-llm --download-dataset
+
+  # Treinar modelo do zero
+  ./lmcs-llm
+
+  # Adicionar mais épocas de treinamento
+  ./lmcs-llm --train
+
+  # Iniciar servidor com modelo existente
+  ./lmcs-llm
+
+Dataset:
+  O download baixa conversas de atendimento em português do HuggingFace:
+  - Brazilian Customer Service Conversations
+  - Formato: Usuário/Assistente
+  - Gera: dataset/data/train.txt (e livro.txt para compatibilidade)
+`)
 }
