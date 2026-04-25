@@ -12,6 +12,8 @@ Um modelo de linguagem LSTM (Long Short-Term Memory) em nível de caractere com 
 - **API REST**: Endpoints JSON para integração com outros sistemas
 - **Multi-threading**: Treinamento paralelo com 8 workers (GOMAXPROCS)
 - **Auto-detect**: Carrega modelo existente ou treina automaticamente
+- **Treinamento Incremental**: Pause, teste e continue de onde parou
+- **Checkpoint**: Modelo salva progresso automaticamente (épocas acumuladas)
 
 ## 📁 Estrutura do Projeto
 
@@ -33,6 +35,9 @@ lmcs-llm-ia/
 ├── livros/                # Pasta para PDFs de treinamento
 ├── extract_pdfs.sh        # Script para extração de PDFs para txt
 ├── test_model.sh          # Script para testar geração de texto
+├── train_incremental.sh   # Script para treinamento incremental
+├── monitor_training.sh    # Script para monitorar progresso
+├── TRAINING_GUIDE.md      # Guia completo de treinamento incremental
 ├── config.json            # Configuração do projeto
 └── livro.txt              # Dataset combinado com todos PDFs
 ```
@@ -76,12 +81,14 @@ nano config.json
 # Compilar (recomendado)
 go build -o lmcs-llm
 
-# Executar
+# Executar (carrega modelo existente ou treina novo)
 ./lmcs-llm
 
-# O modelo será:
-# - Carregado de lmcs-model.bin (se existir)
-# - Ou treinado automaticamente com livro.txt
+# Treinar mais épocas (modo incremental)
+./lmcs-llm --train
+
+# Ou usar script interativo
+./train_incremental.sh 40  # Treinar 40 épocas
 ```
 
 ### 5. Acessar
@@ -211,7 +218,40 @@ fetch('/api/ask', {
 - **Idioma**: 100% português (com acentos e ç)
 - **Pré-processamento**: Normalização, filtragem de caracteres, lowercase
 
-### Treinamento
+### Treinamento Incremental
+
+O modelo suporta **treinamento parcial e contínuo**:
+
+```bash
+# Primeiro treinamento (40 épocas)
+./train_incremental.sh 40
+
+# Testar modelo atual
+./train_incremental.sh  # Opção 1
+
+# Continuar treinamento (+40 épocas)
+./train_incremental.sh 40  # Opção 2
+
+# Ou usar comandos diretos
+./lmcs-llm              # Carregar modelo (sem treinar)
+./lmcs-llm --train      # Adicionar mais épocas
+```
+
+**Como funciona:**
+1. Modelo guarda contador de `EpochsTrained`
+2. Salvamento automático após cada sessão
+3. Carregamento inteligente detecta modelo existente
+4. Flag `--train` ativa modo incremental
+5. Épocas são acumuladas: `total = existentes + novas`
+
+**Exemplo:**
+```
+Sessão 1: 40 épocas  → Total: 40
+Sessão 2: +40 épocas → Total: 80
+Sessão 3: +60 épocas → Total: 140
+```
+
+### Treinamento Tradicional
 
 O modelo LSTM é treinado para prever o próximo caractere em uma sequência:
 
@@ -305,14 +345,38 @@ wc -c livro.txt
 ### Testar modelo treinado
 
 ```bash
-# Executar script de teste
+# Script de teste automático
 chmod +x test_model.sh
 ./test_model.sh
+
+# Script interativo (menu completo)
+chmod +x train_incremental.sh
+./train_incremental.sh  # Opção 1: Testar
 
 # Ou testar manualmente
 curl -X POST http://localhost:8080/api/ask \
   -H "Content-Type: application/json" \
   -d '{"seed": "era uma vez", "length": 100, "temperature": 0.6}'
+```
+
+### Treinamento Incremental
+
+```bash
+# Ver épocas já treinadas
+./lmcs-llm
+# Output: "📊 Status: 120 épocas treinadas"
+
+# Treinar mais épocas (incremental)
+./lmcs-llm --train
+
+# Script interativo com menu
+./train_incremental.sh
+# 1. Testar modelo atual
+# 2. Treinar mais épocas
+# 3. Treinar do zero
+
+# Ver guia completo
+cat TRAINING_GUIDE.md
 ```
 
 ## 📄 Licença
