@@ -310,6 +310,35 @@ func (m *LstmModel) Generate(seed string, length int, temperature float64, topK 
 		nextChar := m.IDToChar[nextCharID]
 		result += string(nextChar)
 		context = append(context, nextChar)
+
+		// Detectar fim da resposta do assistente
+		// Para quando vê "\nUsuário:" ou "\nusuario:"
+		if nextChar == '\n' && len(result) > 30 {
+			// Verificar últimos 10 caracteres
+			if len(result) >= 10 {
+				tail := result[len(result)-10:]
+				if tail == "\nUsuário: " || tail == "\nUsuário:" ||
+					tail == "\nusuario: " || tail == "\nusuario:" {
+					// Remover marcador e parar
+					result = result[:len(result)-len(tail)]
+					break
+				}
+			}
+		}
+	}
+
+	// Remover o prompt/seed do resultado final
+	// Ex: seed="Usuário: ola\nAssistente: " -> retorna só a resposta
+	if len(result) > len(seed) {
+		result = result[len(seed):]
+	}
+
+	// Limpar whitespace do início e fim
+	for len(result) > 0 && (result[0] == ' ' || result[0] == '\n' || result[0] == '\t') {
+		result = result[1:]
+	}
+	for len(result) > 0 && (result[len(result)-1] == ' ' || result[len(result)-1] == '\n' || result[len(result)-1] == '\t') {
+		result = result[:len(result)-1]
 	}
 
 	return result

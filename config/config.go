@@ -106,8 +106,8 @@ func (c *Config) Validate() error {
 	if c.Training.Temperature <= 0 || c.Training.Temperature > 2.0 {
 		return fmt.Errorf("temperature deve estar entre 0 e 2")
 	}
-	if c.Training.ContextSize <= 0 || c.Training.ContextSize > 100 {
-		return fmt.Errorf("context_size deve estar entre 1 e 100")
+	if c.Training.ContextSize <= 0 || c.Training.ContextSize > 500 {
+		return fmt.Errorf("context_size deve estar entre 1 e 500")
 	}
 	if c.Training.NumLayers <= 0 || c.Training.NumLayers > 5 {
 		return fmt.Errorf("num_layers deve estar entre 1 e 5")

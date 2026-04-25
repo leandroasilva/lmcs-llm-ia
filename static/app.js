@@ -129,9 +129,11 @@ async function generateAIResponse(conversation) {
     const loadingId = addLoadingMessage();
     
     try {
-        // Extrair seed da mensagem (primeiras 2-3 palavras)
-        const seed = extractSeed(conversation.messages[conversation.messages.length - 1].content);
-        const length = parseInt(maxLengthInput.value) || 100;
+        // Formatar prompt conversacional com histórico
+        const userMessage = conversation.messages[conversation.messages.length - 1].content;
+        const prompt = formatConversationPrompt(userMessage, conversation.messages);
+        
+        const length = parseInt(maxLengthInput.value) || 200;
         const temperature = parseFloat(temperatureSlider.value) || 0.7;
         const topK = 40;
         
@@ -142,7 +144,7 @@ async function generateAIResponse(conversation) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                seed: seed,
+                seed: prompt,
                 length: length,
                 temperature: temperature,
                 top_k: topK
@@ -183,7 +185,29 @@ async function generateAIResponse(conversation) {
     }
 }
 
-// Extrair seed da mensagem
+// Formatar prompt conversacional com histórico
+function formatConversationPrompt(userMessage, conversationHistory) {
+    let prompt = "";
+    
+    // Adicionar histórico (últimas 3 mensagens = 6 items)
+    const recentMessages = conversationHistory.slice(-6);
+    
+    for (const msg of recentMessages) {
+        if (msg.role === 'user') {
+            prompt += `Usuário: ${msg.content}\n`;
+        } else if (msg.role === 'ai') {
+            prompt += `Assistente: ${msg.content}\n\n`;
+        }
+    }
+    
+    // Adicionar mensagem atual
+    prompt += `Usuário: ${userMessage}\n`;
+    prompt += `Assistente: `;
+    
+    return prompt;
+}
+
+// Extrair seed da mensagem (manter para compatibilidade)
 function extractSeed(text) {
     // Pegar primeiras 2-3 palavras ou 10 caracteres como contexto
     const words = text.split(/\s+/).slice(0, 3).join(' ');
