@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/leandroasilva/lmcs-llm-ia/model"
@@ -103,8 +105,14 @@ func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
 
 	startTime := time.Now()
 
+	// Formatar como conversação para o modelo
+	conversationalPrompt := fmt.Sprintf("Usuário: %s\nAssistente: ", req.Question)
+
 	// Gerar resposta
-	answer := h.model.Generate(req.Question, 100, req.Temperature, req.TopK)
+	fullResponse := h.model.Generate(conversationalPrompt, 150, req.Temperature, req.TopK)
+
+	// Extrair apenas a resposta do assistente
+	answer := extractAssistantResponse(fullResponse)
 
 	elapsed := time.Since(startTime)
 	log.Printf("Resposta gerada em %s: %s\n", elapsed, answer)
@@ -147,4 +155,25 @@ func (h *Handler) sendError(w http.ResponseWriter, message string, status int) {
 		Success: false,
 		Error:   message,
 	}, status)
+}
+
+// extractAssistantResponse extrai apenas a resposta do assistente
+func extractAssistantResponse(fullResponse string) string {
+	// Procurar por "Assistente: " e pegar o texto após
+	if idx := strings.Index(fullResponse, "Assistente: "); idx != -1 {
+		response := fullResponse[idx+len("Assistente: "):]
+
+		// Parar no próximo "Usuário: " se existir
+		if userIdx := strings.Index(response, "\nUsuário: "); userIdx != -1 {
+			response = response[:userIdx]
+		}
+
+		// Limpar espaços excessivos
+		response = strings.TrimSpace(response)
+
+		return response
+	}
+
+	// Se não encontrar padrão, retornar texto limpo
+	return strings.TrimSpace(fullResponse)
 }

@@ -133,7 +133,7 @@ async function generateAIResponse(conversation) {
         const userMessage = conversation.messages[conversation.messages.length - 1].content;
         const prompt = formatConversationPrompt(userMessage, conversation.messages);
         
-        const length = parseInt(maxLengthInput.value) || 200;
+        const length = parseInt(maxLengthInput.value) || 150;
         const temperature = parseFloat(temperatureSlider.value) || 0.7;
         const topK = 40;
         
@@ -144,8 +144,7 @@ async function generateAIResponse(conversation) {
                 'Content-Type': 'application/json',
             },
             body: JSON.stringify({
-                seed: prompt,
-                length: length,
+                question: userMessage,
                 temperature: temperature,
                 top_k: topK
             })
@@ -157,8 +156,9 @@ async function generateAIResponse(conversation) {
         
         const data = await response.json();
         
-        if (!data.success) {
-            throw new Error(data.error || 'Erro na geração');
+        // Verificar se há erro na resposta
+        if (data.error) {
+            throw new Error(data.error);
         }
         
         // Remover loading
@@ -167,7 +167,7 @@ async function generateAIResponse(conversation) {
         // Adicionar resposta da IA
         conversation.messages.push({
             role: 'ai',
-            content: data.result,
+            content: data.answer || 'Sem resposta',
             timestamp: new Date()
         });
         
@@ -273,16 +273,16 @@ function renderMessages() {
                     </svg>
                 </div>
                 <h2>Bem-vindo ao LMCS LLM!</h2>
-                <p>Eu sou um modelo de linguagem em nível de caractere. Como posso ajudar?</p>
+                <p>Eu sou um modelo Transformer treinado para assistente conversacional. Como posso ajudar?</p>
                 <div class="suggestions">
-                    <button class="suggestion-btn" onclick="useSuggestion('Gere um texto começando com: o')">
-                        Gere um texto criativo
+                    <button class="suggestion-btn" onclick="useSuggestion('Oi, tudo bem?')">
+                        Oi, tudo bem?
                     </button>
-                    <button class="suggestion-btn" onclick="useSuggestion('Gere um texto começando com: a')">
-                        Crie algo poético
+                    <button class="suggestion-btn" onclick="useSuggestion('Quero contratar um plano')">
+                        Quero contratar um plano
                     </button>
-                    <button class="suggestion-btn" onclick="useSuggestion('Gere um texto começando com: e')">
-                        Experimente algo novo
+                    <button class="suggestion-btn" onclick="useSuggestion('Preciso de suporte técnico')">
+                        Preciso de suporte técnico
                     </button>
                 </div>
             </div>
