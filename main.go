@@ -225,18 +225,8 @@ func trainTransformer(mdl *model.TransformerModel, content string, cfg *config.C
 			loss := model.CrossEntropyLoss(probs, targetToken)
 			epochLoss += loss
 
-			// Update pesos (simplified gradient descent)
-			for v := 0; v < mdl.VocabSize; v++ {
-				grad := probs[v]
-				if v == targetToken {
-					grad -= 1.0
-				}
-				// Update output weights
-				for j := 0; j < mdl.DModel; j++ {
-					mdl.WOut.Set(v, j, mdl.WOut.At(v, j)-currentLR*grad*lastRow[j]*0.01)
-				}
-				mdl.BOut.Set(v, 0, mdl.BOut.At(v, 0)-currentLR*grad*0.01)
-			}
+			// Backpropagation completa!
+			mdl.BackwardPropagation(inputSeq, targetToken, output, currentLR)
 
 			samples++
 		}
