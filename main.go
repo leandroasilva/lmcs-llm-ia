@@ -112,6 +112,8 @@ func main() {
 			cfg.Training.MaxSeqLen,
 			cfg.Training.FFHidden,
 			cfg.Training.LearningRate,
+			cfg.Training.DropoutRate,
+			cfg.Training.WeightDecay,
 		)
 		transformerMdl.Vocab = vocab
 		transformerMdl.WordToID = wordToID

@@ -21,12 +21,14 @@ type TrainingConfig struct {
 	Temperature  float64 `json:"temperature"`
 	TopK         int     `json:"top_k"` // Top-K sampling
 	// Transformer
-	DModel    int `json:"d_model"`     // Dimension do modelo
-	NHeads    int `json:"n_heads"`     // Número de attention heads
-	NumLayers int `json:"num_layers"`  // Número de transformer layers
-	MaxSeqLen int `json:"max_seq_len"` // Tamanho máximo da sequência
-	FFHidden  int `json:"ff_hidden"`   // Hidden size do feed-forward
-	MaxVocab  int `json:"max_vocab"`   // Tamanho máximo do vocabulário
+	DModel      int     `json:"d_model"`      // Dimension do modelo
+	NHeads      int     `json:"n_heads"`      // Número de attention heads
+	NumLayers   int     `json:"num_layers"`   // Número de transformer layers
+	MaxSeqLen   int     `json:"max_seq_len"`  // Tamanho máximo da sequência
+	FFHidden    int     `json:"ff_hidden"`    // Hidden size do feed-forward
+	MaxVocab    int     `json:"max_vocab"`    // Tamanho máximo do vocabulário
+	DropoutRate float64 `json:"dropout_rate"` // Taxa de dropout para regularização
+	WeightDecay float64 `json:"weight_decay"` // Weight decay (L2 regularization)
 }
 
 // ServerConfig configurações do servidor HTTP
@@ -56,6 +58,8 @@ func DefaultConfig() *Config {
 			MaxSeqLen:    256,
 			FFHidden:     256,
 			MaxVocab:     5000,
+			DropoutRate:  0.1,
+			WeightDecay:  0.01,
 		},
 		Server: ServerConfig{
 			Port: ":8080",

@@ -20,6 +20,8 @@ type TransformerModel struct {
 	FFHidden      int // Hidden size do feed-forward
 	LearningRate  float64
 	EpochsTrained int
+	DropoutRate   float64 // Taxa de dropout para regularização
+	WeightDecay   float64 // Weight decay (L2 regularization)
 
 	// Embeddings
 	TokenEmbedding        *mat.Dense // [vocab_size, d_model]
@@ -70,7 +72,7 @@ type TransformerLayer struct {
 }
 
 // NewTransformerModel cria um novo modelo Transformer
-func NewTransformerModel(vocabSize, dModel, nHeads, nLayers, maxSeqLen, ffHidden int, learningRate float64) *TransformerModel {
+func NewTransformerModel(vocabSize, dModel, nHeads, nLayers, maxSeqLen, ffHidden int, learningRate, dropoutRate, weightDecay float64) *TransformerModel {
 	model := &TransformerModel{
 		VocabSize:         vocabSize,
 		DModel:            dModel,
@@ -79,6 +81,8 @@ func NewTransformerModel(vocabSize, dModel, nHeads, nLayers, maxSeqLen, ffHidden
 		MaxSeqLen:         maxSeqLen,
 		FFHidden:          ffHidden,
 		LearningRate:      learningRate,
+		DropoutRate:       dropoutRate,
+		WeightDecay:       weightDecay,
 		TransformerLayers: make([]TransformerLayer, nLayers),
 	}
 
@@ -286,49 +290,169 @@ func (m *TransformerModel) Forward(inputTokens []int) *mat.Dense {
 	return X
 }
 
-// Generate gera texto a partir de um prompt
+// Generate gera texto a partir de um prompt usando Beam Search
 func (m *TransformerModel) Generate(prompt string, maxTokens int, temperature float64, topK int) string {
+	// Usar beam search para melhor qualidade
+	beamWidth := 5
+	return m.GenerateWithBeamSearch(prompt, maxTokens, temperature, beamWidth)
+}
+
+// GenerateWithBeamSearch implementa beam search para geração de texto
+func (m *TransformerModel) GenerateWithBeamSearch(prompt string, maxTokens int, temperature float64, beamWidth int) string {
 	// Tokenizar prompt
-	inputTokens := m.Tokenize(prompt)
+	promptTokens := m.Tokenize(prompt)
+
+	// Beam search: cada beam é [tokens, log_prob]
+	type Beam struct {
+		Tokens  []int
+		LogProb float64
+	}
+
+	// Inicializar com o prompt
+	beams := []Beam{
+		{Tokens: promptTokens, LogProb: 0.0},
+	}
+
+	completedBeams := []Beam{}
 
 	// Gerar tokens um por um
-	for i := 0; i < maxTokens; i++ {
-		// Forward pass
-		output := m.Forward(inputTokens)
+	for step := 0; step < maxTokens; step++ {
+		allCandidates := []Beam{}
 
-		// Pegar última posição
-		seqLen := output.RawMatrix().Rows
-		lastRow := mat.NewDense(1, m.DModel, nil)
-		for j := 0; j < m.DModel; j++ {
-			lastRow.Set(0, j, output.At(seqLen-1, j))
-		}
+		// Expandir cada beam
+		for _, beam := range beams {
+			// Forward pass
+			output := m.Forward(beam.Tokens)
 
-		// Calcular logits para próximo token
-		logits := make([]float64, m.VocabSize)
-		for v := 0; v < m.VocabSize; v++ {
-			logits[v] = m.BOut.At(v, 0)
+			// Pegar última posição
+			seqLen := output.RawMatrix().Rows
+			lastRow := mat.NewDense(1, m.DModel, nil)
 			for j := 0; j < m.DModel; j++ {
-				logits[v] += m.WOut.At(v, j) * lastRow.At(0, j)
+				lastRow.Set(0, j, output.At(seqLen-1, j))
+			}
+
+			// Calcular logits para próximo token
+			logits := make([]float64, m.VocabSize)
+			for v := 0; v < m.VocabSize; v++ {
+				logits[v] = m.BOut.At(v, 0)
+				for j := 0; j < m.DModel; j++ {
+					logits[v] += m.WOut.At(v, j) * lastRow.At(0, j)
+				}
+			}
+
+			// Aplicar softmax com temperatura
+			probs := softmaxWithTemperature(logits, temperature)
+
+			// Pegar top-K candidatos
+			type probIdx struct {
+				prob float64
+				idx  int
+			}
+			var sorted []probIdx
+			for i, p := range probs {
+				sorted = append(sorted, probIdx{p, i})
+			}
+			// Sort descending
+			for i := 0; i < len(sorted); i++ {
+				for j := i + 1; j < len(sorted); j++ {
+					if sorted[j].prob > sorted[i].prob {
+						sorted[i], sorted[j] = sorted[j], sorted[i]
+					}
+				}
+			}
+
+			// Pegar top candidates
+			topN := beamWidth
+			if topN > len(sorted) {
+				topN = len(sorted)
+			}
+
+			// Criar novos beams para cada candidato
+			for i := 0; i < topN; i++ {
+				tokenID := sorted[i].idx
+				prob := sorted[i].prob
+
+				if prob < 1e-10 {
+					continue
+				}
+
+				// Calcular log probability
+				logProb := beam.LogProb + math.Log(prob)
+
+				// Criar novo beam
+				newTokens := make([]int, len(beam.Tokens))
+				copy(newTokens, beam.Tokens)
+				newTokens = append(newTokens, tokenID)
+
+				allCandidates = append(allCandidates, Beam{
+					Tokens:  newTokens,
+					LogProb: logProb,
+				})
 			}
 		}
 
-		// Aplicar softmax com temperatura
-		probs := softmaxWithTemperature(logits, temperature)
-
-		// Sample
-		nextToken := sampleToken(probs, topK)
-
-		// Verificar se é EOS
-		if nextToken == m.SpecialTokens["<EOS>"] {
+		// Se não há candidatos, parar
+		if len(allCandidates) == 0 {
 			break
 		}
 
-		inputTokens = append(inputTokens, nextToken)
+		// Ordenar candidatos por log probabilidade
+		for i := 0; i < len(allCandidates); i++ {
+			for j := i + 1; j < len(allCandidates); j++ {
+				if allCandidates[j].LogProb > allCandidates[i].LogProb {
+					allCandidates[i], allCandidates[j] = allCandidates[j], allCandidates[i]
+				}
+			}
+		}
+
+		// Verificar beams completados (EOS)
+		newBeams := []Beam{}
+		for _, candidate := range allCandidates {
+			lastToken := candidate.Tokens[len(candidate.Tokens)-1]
+			if lastToken == m.SpecialTokens["<EOS>"] {
+				completedBeams = append(completedBeams, candidate)
+			} else if len(newBeams) < beamWidth {
+				newBeams = append(newBeams, candidate)
+			}
+		}
+
+		beams = newBeams
+
+		// Se não há beams ativos, parar
+		if len(beams) == 0 {
+			break
+		}
+
+		// Limitar número de beams
+		if len(beams) > beamWidth {
+			beams = beams[:beamWidth]
+		}
+	}
+
+	// Adicionar beams incompletos aos completados
+	for _, beam := range beams {
+		completedBeams = append(completedBeams, beam)
+	}
+
+	// Se não há beams completados, usar o primeiro
+	if len(completedBeams) == 0 {
+		return ""
+	}
+
+	// Selecionar o melhor beam (maior log probabilidade normalizada)
+	bestBeam := completedBeams[0]
+	bestScore := completedBeams[0].LogProb / float64(len(completedBeams[0].Tokens))
+
+	for i := 1; i < len(completedBeams); i++ {
+		score := completedBeams[i].LogProb / float64(len(completedBeams[i].Tokens))
+		if score > bestScore {
+			bestBeam = completedBeams[i]
+			bestScore = score
+		}
 	}
 
 	// Converter para texto (remover prompt)
-	promptTokens := m.Tokenize(prompt)
-	generatedTokens := inputTokens[len(promptTokens):]
+	generatedTokens := bestBeam.Tokens[len(promptTokens):]
 	return m.Detokenize(generatedTokens)
 }
 
@@ -677,6 +801,28 @@ func applyLayerNorm(X *mat.Dense, seqLen, dModel int) *mat.Dense {
 	return result
 }
 
+// applyDropout aplica dropout para regularização
+func applyDropout(X *mat.Dense, seqLen, dModel int, dropoutRate float64, training bool) *mat.Dense {
+	if !training || dropoutRate <= 0 {
+		return X
+	}
+
+	result := mat.NewDense(seqLen, dModel, nil)
+	scale := 1.0 / (1.0 - dropoutRate)
+
+	for i := 0; i < seqLen; i++ {
+		for j := 0; j < dModel; j++ {
+			if rand.Float64() < dropoutRate {
+				result.Set(i, j, 0)
+			} else {
+				result.Set(i, j, X.At(i, j)*scale)
+			}
+		}
+	}
+
+	return result
+}
+
 // transformerSoftmax calcula softmax
 func transformerSoftmax(logits []float64) []float64 {
 	probs := make([]float64, len(logits))
@@ -857,7 +1003,9 @@ func (m *TransformerModel) updateWeights(lr float64, clipValue float64) {
 			} else if grad < -clipValue {
 				grad = -clipValue
 			}
-			m.WOut.Set(v, j, m.WOut.At(v, j)-lr*grad)
+			// Apply weight decay (L2 regularization)
+			weight := m.WOut.At(v, j)
+			m.WOut.Set(v, j, weight-lr*(grad+m.WeightDecay*weight))
 		}
 		grad := m.GradBOut.At(v, 0)
 		if grad > clipValue {
@@ -877,7 +1025,8 @@ func (m *TransformerModel) updateWeights(lr float64, clipValue float64) {
 			} else if grad < -clipValue {
 				grad = -clipValue
 			}
-			m.TokenEmbedding.Set(v, j, m.TokenEmbedding.At(v, j)-lr*grad*0.1)
+			weight := m.TokenEmbedding.At(v, j)
+			m.TokenEmbedding.Set(v, j, weight-lr*(grad*0.1+m.WeightDecay*weight))
 		}
 	}
 
@@ -890,16 +1039,20 @@ func (m *TransformerModel) updateWeights(lr float64, clipValue float64) {
 			for c := 0; c < layer.WQ.RawMatrix().Cols; c++ {
 				// Verificar se os gradientes existem e têm tamanho correto
 				if layer.GradWQ != nil && r < layer.GradWQ.RawMatrix().Rows && c < layer.GradWQ.RawMatrix().Cols {
-					layer.WQ.Set(r, c, layer.WQ.At(r, c)-lr*layer.GradWQ.At(r, c)*0.1)
+					weight := layer.WQ.At(r, c)
+					layer.WQ.Set(r, c, weight-lr*(layer.GradWQ.At(r, c)*0.1+m.WeightDecay*weight))
 				}
 				if layer.GradWK != nil && r < layer.GradWK.RawMatrix().Rows && c < layer.GradWK.RawMatrix().Cols {
-					layer.WK.Set(r, c, layer.WK.At(r, c)-lr*layer.GradWK.At(r, c)*0.1)
+					weight := layer.WK.At(r, c)
+					layer.WK.Set(r, c, weight-lr*(layer.GradWK.At(r, c)*0.1+m.WeightDecay*weight))
 				}
 				if layer.GradWV != nil && r < layer.GradWV.RawMatrix().Rows && c < layer.GradWV.RawMatrix().Cols {
-					layer.WV.Set(r, c, layer.WV.At(r, c)-lr*layer.GradWV.At(r, c)*0.1)
+					weight := layer.WV.At(r, c)
+					layer.WV.Set(r, c, weight-lr*(layer.GradWV.At(r, c)*0.1+m.WeightDecay*weight))
 				}
 				if layer.GradWO != nil && r < layer.GradWO.RawMatrix().Rows && c < layer.GradWO.RawMatrix().Cols {
-					layer.WO.Set(r, c, layer.WO.At(r, c)-lr*layer.GradWO.At(r, c)*0.1)
+					weight := layer.WO.At(r, c)
+					layer.WO.Set(r, c, weight-lr*(layer.GradWO.At(r, c)*0.1+m.WeightDecay*weight))
 				}
 			}
 		}
@@ -909,10 +1062,12 @@ func (m *TransformerModel) updateWeights(lr float64, clipValue float64) {
 			for r := 0; r < layer.W1.RawMatrix().Rows; r++ {
 				for c := 0; c < layer.W1.RawMatrix().Cols; c++ {
 					if layer.GradW1 != nil && r < layer.GradW1.RawMatrix().Rows && c < layer.GradW1.RawMatrix().Cols {
-						layer.W1.Set(r, c, layer.W1.At(r, c)-lr*layer.GradW1.At(r, c)*0.1)
+						weight := layer.W1.At(r, c)
+						layer.W1.Set(r, c, weight-lr*(layer.GradW1.At(r, c)*0.1+m.WeightDecay*weight))
 					}
 					if layer.GradW2 != nil && r < layer.GradW2.RawMatrix().Rows && c < layer.GradW2.RawMatrix().Cols {
-						layer.W2.Set(r, c, layer.W2.At(r, c)-lr*layer.GradW2.At(r, c)*0.1)
+						weight := layer.W2.At(r, c)
+						layer.W2.Set(r, c, weight-lr*(layer.GradW2.At(r, c)*0.1+m.WeightDecay*weight))
 					}
 				}
 			}
