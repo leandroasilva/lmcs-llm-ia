@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/leandroasilva/lmcs-llm-ia/internal/tokenizer"
 	"gonum.org/v1/gonum/mat"
 )
 
@@ -44,6 +45,10 @@ type TransformerModel struct {
 	WordToID      map[string]int // Word to ID mapping
 	IDToWord      map[int]string // ID to word mapping
 	SpecialTokens map[string]int // Special tokens (<PAD>, <UNK>, etc.)
+
+	// BPE Tokenizer (opcional)
+	BPETokenizer *tokenizer.BPETokenizer // BPE tokenizer
+	UseBPE       bool                    // Flag para usar BPE
 }
 
 // TransformerLayer representa uma camada do Transformer
@@ -226,6 +231,12 @@ func BuildVocabTransformer(text string, maxVocab int) ([]string, map[string]int,
 
 // Tokenize converte texto para IDs
 func (m *TransformerModel) Tokenize(text string) []int {
+	// Usar BPE se habilitado
+	if m.UseBPE && m.BPETokenizer != nil {
+		return m.BPETokenizer.Tokenize(text)
+	}
+
+	// Tokenização word-level padrão
 	words := strings.Fields(strings.ToLower(text))
 	tokens := []int{m.SpecialTokens["<BOS>"]} // Begin of sequence
 
@@ -244,6 +255,12 @@ func (m *TransformerModel) Tokenize(text string) []int {
 
 // Detokenize converte IDs para texto
 func (m *TransformerModel) Detokenize(tokens []int) string {
+	// Usar BPE se habilitado
+	if m.UseBPE && m.BPETokenizer != nil {
+		return m.BPETokenizer.Decode(tokens)
+	}
+
+	// Tokenização word-level padrão
 	var words []string
 	for _, id := range tokens {
 		if id == m.SpecialTokens["<PAD>"] || id == m.SpecialTokens["<BOS>"] || id == m.SpecialTokens["<EOS>"] {
@@ -254,6 +271,30 @@ func (m *TransformerModel) Detokenize(tokens []int) string {
 		}
 	}
 	return strings.Join(words, " ")
+}
+
+// TrainAndEnableBPE treina BPE e habilita no modelo
+func (m *TransformerModel) TrainAndEnableBPE(corpus string, vocabSize int) {
+	// Criar e treinar BPE tokenizer
+	bpe := tokenizer.NewBPETokenizer()
+	bpe.Train(corpus, vocabSize)
+
+	// Configurar no modelo
+	m.BPETokenizer = bpe
+	m.UseBPE = true
+	m.VocabSize = bpe.GetVocabSize()
+
+	// Recriar embeddings para novo vocabulário
+	scale := math.Sqrt(2.0 / float64(m.DModel))
+	m.TokenEmbedding = transformerRandomMatrix(m.VocabSize, m.DModel, scale)
+}
+
+// GetTokenizerType retorna o tipo de tokenizador ativo
+func (m *TransformerModel) GetTokenizerType() string {
+	if m.UseBPE && m.BPETokenizer != nil {
+		return "BPE"
+	}
+	return "Word-level"
 }
 
 // Forward realiza forward pass do Transformer
