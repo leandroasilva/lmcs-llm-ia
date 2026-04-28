@@ -1,12 +1,12 @@
 package train
 
 import (
-	"log"
 	"math"
 	"os"
 	"time"
 
 	"github.com/leandroasilva/lmcs-llm-ia/internal/config"
+	"github.com/leandroasilva/lmcs-llm-ia/internal/logger"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/model"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/training"
 )
@@ -16,9 +16,9 @@ func RunTrain(configPath string) error {
 	cfg := config.DefaultConfig()
 
 	if _, err := os.Stat(configPath); err == nil {
-		log.Printf("Carregando configurações de %s...\n", configPath)
+		logger.Info("Loading configuration", "config_path", configPath)
 		if loadedCfg, err := config.LoadFromFile(configPath); err != nil {
-			log.Printf("Aviso: Erro ao carregar %s, usando padrões: %v\n", configPath, err)
+			logger.Warn("Error loading config, using defaults", "error", err)
 		} else {
 			cfg = loadedCfg
 		}
@@ -29,22 +29,22 @@ func RunTrain(configPath string) error {
 		return err
 	}
 
-	log.Printf("Configuração: %+v\n", cfg)
+	logger.Info("Configuration loaded", "config", cfg)
 
 	// Carregar texto de treinamento
 	data, err := os.ReadFile(cfg.Paths.InputFile)
 	var content string
 	if err != nil {
-		log.Printf("Aviso: Não foi possível ler %s, usando texto padrão\n", cfg.Paths.InputFile)
+		logger.Warn("Could not read input file, using default text", "file", cfg.Paths.InputFile, "error", err)
 		content = "o rato roeu a roupa do rei de roma. o rei mandou buscar outro rato."
 	} else {
 		content = string(data)
-		log.Printf("Texto carregado: %d caracteres\n", len(content))
+		logger.Info("Text loaded", "characters", len(content))
 
 		// Pré-processar texto
-		log.Println("Pré-processando texto...")
+		logger.Info("Preprocessing text")
 		content = model.PreprocessText(content)
-		log.Printf("Texto após pré-processamento: %d caracteres\n", len(content))
+		logger.Info("Text preprocessed", "characters", len(content))
 	}
 
 	// Carregar ou criar modelo
@@ -52,19 +52,19 @@ func RunTrain(configPath string) error {
 	modelLoaded := false
 
 	if _, err := os.Stat(cfg.Paths.ModelPath); err == nil {
-		log.Printf("Carregando modelo existente de %s...\n", cfg.Paths.ModelPath)
+		logger.Info("Loading existing model", "path", cfg.Paths.ModelPath)
 		transformerMdl, err = model.LoadTransformerModel(cfg.Paths.ModelPath)
 		if err != nil {
-			log.Printf("Erro ao carregar modelo, criando novo: %v\n", err)
+			logger.Warn("Error loading model, creating new one", "error", err)
 			transformerMdl = nil
 		} else {
 			modelLoaded = true
-			log.Printf("Modelo carregado com sucesso!\n")
+			logger.Info("Model loaded successfully")
 		}
 	}
 
 	if transformerMdl == nil {
-		log.Println("Inicializando novo modelo...")
+		logger.Info("Initializing new model")
 		vocab, wordToID, idToWord := model.BuildVocabTransformer(content, cfg.Training.MaxVocab)
 		vocabSize := len(vocab)
 
@@ -82,8 +82,11 @@ func RunTrain(configPath string) error {
 		transformerMdl.Vocab = vocab
 		transformerMdl.WordToID = wordToID
 		transformerMdl.IDToWord = idToWord
-		log.Printf("Modelo criado: vocab=%d, d_model=%d, heads=%d, layers=%d\n",
-			vocabSize, cfg.Training.DModel, cfg.Training.NHeads, cfg.Training.NumLayers)
+		logger.Info("Model created",
+			"vocab", vocabSize,
+			"d_model", cfg.Training.DModel,
+			"heads", cfg.Training.NHeads,
+			"layers", cfg.Training.NumLayers)
 	}
 
 	// Iniciar métricas de treinamento
@@ -93,11 +96,12 @@ func RunTrain(configPath string) error {
 
 	// Treinar modelo
 	if modelLoaded {
-		log.Printf("\nContinuando treinamento: %d épocas já treinadas", transformerMdl.EpochsTrained)
-		log.Printf("Adicionando %d novas épocas...\n", cfg.Training.Epochs)
+		logger.Info("Continuing training", "epochs_trained", transformerMdl.EpochsTrained, "new_epochs", cfg.Training.Epochs)
 	} else {
-		log.Printf("\nIniciando treinamento: %d épocas, lr=%.4f, batch=%d\n",
-			cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize)
+		logger.Info("Starting training",
+			"epochs", cfg.Training.Epochs,
+			"learning_rate", cfg.Training.LearningRate,
+			"batch_size", cfg.Training.BatchSize)
 	}
 
 	trainTransformer(transformerMdl, content, cfg, training.GlobalMetrics)
@@ -110,8 +114,7 @@ func RunTrain(configPath string) error {
 		return err
 	}
 
-	log.Printf("\n✅ Modelo salvo em %s", cfg.Paths.ModelPath)
-	log.Printf("Total de épocas treinadas: %d", transformerMdl.EpochsTrained)
+	logger.Info("Model saved", "path", cfg.Paths.ModelPath, "epochs_trained", transformerMdl.EpochsTrained)
 	return nil
 }
 
@@ -122,7 +125,7 @@ func trainTransformer(mdl *model.TransformerModel, content string, cfg *config.C
 	// Tokenizar todo o conteúdo
 	tokens := mdl.Tokenize(content)
 	totalTokens := len(tokens)
-	log.Printf("Dataset: %d tokens (vocab: %d)\n", totalTokens, len(mdl.Vocab))
+	logger.Info("Dataset prepared", "tokens", totalTokens, "vocab", len(mdl.Vocab))
 
 	for epoch := 1; epoch <= cfg.Training.Epochs; epoch++ {
 		// Learning rate scheduling
@@ -184,13 +187,15 @@ func trainTransformer(mdl *model.TransformerModel, content string, cfg *config.C
 			if epoch%5 == 0 || epoch == 1 {
 				elapsed := time.Since(startTime)
 				perplexity := metrics.Perplexity
-				log.Printf("Época %d/%d - Loss: %.4f | Perplexity: %.2f | LR: %.6f | Samples: %d | Tempo: %s\n",
-					epoch, cfg.Training.Epochs, avgLoss, perplexity, currentLR, samples, elapsed)
+				logger.TrainingLog(epoch, cfg.Training.Epochs, avgLoss, perplexity,
+					"learning_rate", currentLR,
+					"samples", samples,
+					"elapsed", elapsed.String())
 			}
 		}
 	}
 
-	log.Printf("Treinamento concluído!\n")
+	logger.Info("Training completed", "total_epochs", mdl.EpochsTrained)
 	mdl.EpochsTrained += cfg.Training.Epochs
-	log.Printf("Total de épocas treinadas (acumulado): %d\n", mdl.EpochsTrained)
+	logger.Info("Total accumulated epochs", "epochs", mdl.EpochsTrained)
 }
