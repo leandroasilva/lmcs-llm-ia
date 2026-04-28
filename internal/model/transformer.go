@@ -41,6 +41,10 @@ type TransformerModel struct {
 	GradWOut  *mat.Dense // Gradientes
 	GradBOut  *mat.Dense // Gradientes
 
+	// Multi-Token Prediction (MTP)
+	MTPHead *MTPHead // Cabeça de predição multi-token
+	UseMTP  bool     // Flag para usar MTP
+
 	// Tokenizer
 	Vocab         []string       // Vocabulary (word-level)
 	WordToID      map[string]int // Word to ID mapping
@@ -188,6 +192,30 @@ func (model *TransformerModel) EnableMoEForAllLayers(numExperts, topK int) {
 	for i := range model.TransformerLayers {
 		model.EnableMoEForLayer(i, moeConfig)
 	}
+}
+
+// EnableMTP habilita Multi-Token Prediction
+func (model *TransformerModel) EnableMTP(numPredictions int, weightMTP float64) {
+	mtpConfig := NewMTPConfig(numPredictions, model.VocabSize, model.DModel)
+	mtpConfig.WeightMTP = weightMTP
+	model.MTPHead = NewMTPHead(mtpConfig)
+	model.UseMTP = true
+}
+
+// ForwardWithMTP faz forward pass com MTP
+// Returns: hidden state, MTP logits, MTP loss
+func (model *TransformerModel) ForwardWithMTP(inputTokens []int, targets [][]int) (*mat.Dense, []*mat.Dense, float64) {
+	// Forward pass normal
+	hidden := model.Forward(inputTokens)
+	seqLen := len(inputTokens)
+
+	// Se MTP está habilitado, calcular MTP loss
+	if model.UseMTP && model.MTPHead != nil && targets != nil {
+		_, logits, mtpLoss := MTPForward(model.MTPHead, hidden, targets, seqLen)
+		return hidden, logits, mtpLoss
+	}
+
+	return hidden, nil, 0.0
 }
 
 // BuildVocabTransformer constrói vocabulário word-level a partir do texto
