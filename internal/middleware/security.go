@@ -8,6 +8,26 @@ import (
 	"time"
 )
 
+// responseWriterWrapper wraps http.ResponseWriter to track if headers were written
+type responseWriterWrapper struct {
+	http.ResponseWriter
+	written bool
+}
+
+func (w *responseWriterWrapper) WriteHeader(code int) {
+	w.written = true
+	w.ResponseWriter.WriteHeader(code)
+}
+
+func (w *responseWriterWrapper) Write(b []byte) (int, error) {
+	w.written = true
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *responseWriterWrapper) Written() bool {
+	return w.written
+}
+
 // RateLimiter implementa token bucket rate limiting
 type RateLimiter struct {
 	tokens     map[string]int
@@ -120,11 +140,14 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 			// Update request context
 			r = r.WithContext(ctx)
 
+			// Wrapper para tracking se headers já foram escritos
+			wrapped := &responseWriterWrapper{ResponseWriter: w}
+
 			// Channel para sinalizar conclusão
 			done := make(chan struct{})
 
 			go func() {
-				next.ServeHTTP(w, r)
+				next.ServeHTTP(wrapped, r)
 				close(done)
 			}()
 
@@ -134,8 +157,7 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 				return
 			case <-ctx.Done():
 				// Só escreve se headers ainda não foram enviados
-				// Verifica se o response writer ainda permite escrever
-				if _, err := w.Write(nil); err == nil {
+				if !wrapped.Written() {
 					http.Error(w, "Request timeout", http.StatusGatewayTimeout)
 				}
 				return
