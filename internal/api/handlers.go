@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/leandroasilva/lmcs-llm-ia/internal/model"
+	"github.com/leandroasilva/lmcs-llm-ia/internal/sanitizer"
+	"github.com/leandroasilva/lmcs-llm-ia/internal/validation"
 )
 
 // AskRequest representa uma requisição de geração de texto
@@ -74,9 +76,6 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 // handleAsk handler para geração de texto
 func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 
 	// Handle preflight
 	if r.Method == http.MethodOptions {
@@ -96,6 +95,17 @@ func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Fallback para query params (GET)
 		req.Question = r.URL.Query().Get("q")
+	}
+
+	// Sanitizar input
+	req.Question = sanitizer.SanitizePrompt(req.Question)
+
+	// Validar input
+	val := validation.NewValidator()
+	val.ValidateString("question", req.Question, 1, 10000)
+	if val.HasErrors() {
+		h.sendError(w, fmt.Sprintf("Validation failed: %v", val.GetErrors()), http.StatusBadRequest)
+		return
 	}
 
 	// Validações e defaults

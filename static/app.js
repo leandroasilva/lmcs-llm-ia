@@ -4,6 +4,52 @@ let currentConversationId = null;
 let isGenerating = false;
 let trainingEventSource = null;
 
+// Sanitização de input para prevenir XSS
+function sanitizeInput(input) {
+    if (!input) return '';
+    
+    // Converter para string
+    input = String(input);
+    
+    // Trim whitespace
+    input = input.trim();
+    
+    // Escape HTML entities
+    const div = document.createElement('div');
+    div.textContent = input;
+    input = div.innerHTML;
+    
+    // Remover scripts
+    input = input.replace(/<script[^>]*>.*?<\/script>/gi, '');
+    
+    // Remover tags HTML perigosas
+    const dangerousTags = ['script', 'iframe', 'object', 'embed', 'form', 'input'];
+    dangerousTags.forEach(tag => {
+        const regex = new RegExp(`</?${tag}[^>]*>`, 'gi');
+        input = input.replace(regex, '');
+    });
+    
+    // Limitar tamanho
+    if (input.length > 10000) {
+        input = input.substring(0, 10000);
+    }
+    
+    return input;
+}
+
+// Validar input
+function validateInput(input) {
+    if (!input || input.trim() === '') {
+        return { valid: false, error: 'Input is required' };
+    }
+    
+    if (input.length > 10000) {
+        return { valid: false, error: 'Input too long (max 10000 chars)' };
+    }
+    
+    return { valid: true };
+}
+
 // Elementos DOM
 const chatMessages = document.getElementById('chatMessages');
 const messageInput = document.getElementById('messageInput');
@@ -87,7 +133,18 @@ function useSuggestion(text) {
 async function sendMessage(event) {
     event.preventDefault();
     
-    const text = messageInput.value.trim();
+    let text = messageInput.value.trim();
+    
+    // Validar input
+    const validation = validateInput(text);
+    if (!validation.valid) {
+        alert(validation.error);
+        return;
+    }
+    
+    // Sanitizar input (prevenir XSS)
+    text = sanitizeInput(text);
+    
     if (!text || isGenerating) return;
     
     // Criar conversa se não existir

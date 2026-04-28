@@ -5,9 +5,11 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"time"
 
 	"github.com/leandroasilva/lmcs-llm-ia/internal/api"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/config"
+	"github.com/leandroasilva/lmcs-llm-ia/internal/middleware"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/model"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/training"
 )
@@ -60,14 +62,36 @@ func RunServe(configPath string) error {
 	mux.HandleFunc("/api/training/status", trainingHandler.HandleTrainingStatus)          // SSE
 	mux.HandleFunc("/api/training/status/json", trainingHandler.HandleTrainingStatusJSON) // JSON
 
+	// Aplicar middlewares de segurança
+	var httpHandler http.Handler = mux
+
+	// 1. Security Headers
+	httpHandler = middleware.SecurityHeaders(httpHandler)
+
+	// 2. CORS (configurável)
+	allowedOrigins := []string{"*"} // Em produção, especificar origens
+	httpHandler = middleware.CORS(allowedOrigins)(httpHandler)
+
+	// 3. Rate Limiting (100 req/min por IP)
+	rateLimiter := middleware.NewRateLimiter(100, time.Minute)
+	httpHandler = middleware.RateLimit(rateLimiter)(httpHandler)
+
+	// 4. Timeout (30s por requisição)
+	httpHandler = middleware.Timeout(30 * time.Second)(httpHandler)
+
 	log.Printf("Servidor rodando em http://%s%s\n", cfg.Server.Host, cfg.Server.Port)
 	log.Println("Frontend: http://localhost" + cfg.Server.Port)
 	log.Println("API Endpoints:")
 	log.Println("  GET  /api/health")
 	log.Println("  POST /api/ask")
+	log.Println("Security:")
+	log.Println("  ✓ CORS enabled")
+	log.Println("  ✓ Rate limiting: 100 req/min")
+	log.Println("  ✓ Timeout: 30s")
+	log.Println("  ✓ Security headers")
 
 	// Iniciar servidor
-	if err := http.ListenAndServe(cfg.Server.Port, mux); err != nil {
+	if err := http.ListenAndServe(cfg.Server.Port, httpHandler); err != nil {
 		return err
 	}
 
