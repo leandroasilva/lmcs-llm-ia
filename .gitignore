@@ -1,40 +1,89 @@
-# Binários
+# Binários do Go
 *.exe
 *.exe~
 *.dll
 *.so
 *.dylib
 lmcs-llm
-lmcs-llm-*
 
-# Dados de treinamento
-*.txt
-livros
-
-# Modelo treinado
+# Arquivos de modelo (binários grandes)
 *.bin
+lmcs-model.bin
+model.bin
+*.bin.bak
 
-# Configuração local
-config.json
+# Cache de vocabulário
+vocab-cache.gob
+*.gob
 
-# Ambiente (contém secrets)
-.env
+# Diretórios de build
+/build
+/dist
+/vendor
 
-# IDE
+# IDE e editores
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
-
-# OS
 .DS_Store
-Thumbs.db
 
-# Go
-go.sum
+# Arquivos de teste
+*.test
+*.out
+coverage.txt
+coverage.out
 
-# Python
-__pycache__/
-*.pyc
+# Logs
 *.log
+logs/
+
+# Arquivos temporários
+tmp/
+temp/
+*.tmp
+
+# Dataset files (grandes demais para git)
+*.csv
+*.txt
+!README.md
+!go.mod
+!go.sum
+
+# Checkpoints de modelo
+checkpoints/
+checkpoint-*.bin
+
+# Arquivos de profiling
+*.pprof
+*.mem
+*.cpu
+*.trace
+
+# Environment files
+.env
+.env.local
+.env.production
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Linux
+*~
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Debug
+debug
+debug.test
+
+# Backup files
+*.bak
+*.backup
+*.old
