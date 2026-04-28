@@ -6,6 +6,7 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/leandroasilva/lmcs-llm-ia/internal/tokenizer"
 	"gonum.org/v1/gonum/mat"
@@ -695,22 +696,60 @@ func sampleToken(probs []float64, topK int) int {
 
 // transformerLayerForward realiza forward pass de uma camada
 func transformerLayerForward(layer *TransformerLayer, X *mat.Dense, seqLen, dModel, nHeads int) *mat.Dense {
+	// ===== SUB-LAYER 1: Multi-Head Self-Attention =====
+	// Guardar input para residual connection
+	XResidual := mat.NewDense(seqLen, dModel, nil)
+	XResidual.CloneFrom(X)
+
 	// Multi-head self-attention
 	X = multiHeadAttention(layer, X, seqLen, dModel, nHeads)
 
-	// Add & Norm
-	X = applyLayerNorm(X, seqLen, dModel)
+	// Residual Connection + Layer Norm (Post-LN)
+	X = addResidualAndNorm(X, XResidual, seqLen, dModel)
+
+	// ===== SUB-LAYER 2: Feed-Forward =====
+	// Guardar input para residual connection
+	XResidual2 := mat.NewDense(seqLen, dModel, nil)
+	XResidual2.CloneFrom(X)
 
 	// Feed-forward
 	X = feedForward(layer, X, seqLen, dModel)
 
-	// Add & Norm
-	X = applyLayerNorm(X, seqLen, dModel)
+	// Residual Connection + Layer Norm (Post-LN)
+	X = addResidualAndNorm(X, XResidual2, seqLen, dModel)
 
 	return X
 }
 
-// multiHeadAttention implementa attention mechanism
+// matrixPool é um pool de slices para reutilização (performance)
+// Nota: mat.Dense não pode ser poolado diretamente, mas podemos poolar slices
+var floatSlicePool = sync.Pool{
+	New: func() interface{} {
+		s := make([]float64, 0, 1024)
+		return &s
+	},
+}
+
+// getFloatSlice obtém slice do pool
+func getFloatSlice(size int) []float64 {
+	ptr := floatSlicePool.Get().(*[]float64)
+	s := *ptr
+	if cap(s) < size {
+		s = make([]float64, size)
+	} else {
+		s = s[:size]
+	}
+	return s
+}
+
+// putFloatSlice devolve slice ao pool
+func putFloatSlice(s []float64) {
+	ptr := &s
+	floatSlicePool.Put(ptr)
+}
+
+// multiHeadAttention implementa multi-head attention paralelizado
+// Paraleliza o cálculo de cada head usando goroutines
 func multiHeadAttention(layer *TransformerLayer, X *mat.Dense, seqLen, dModel, nHeads int) *mat.Dense {
 	headDim := dModel / nHeads
 
@@ -723,47 +762,97 @@ func multiHeadAttention(layer *TransformerLayer, X *mat.Dense, seqLen, dModel, n
 	K.Mul(X, layer.WK)
 	V.Mul(X, layer.WV)
 
-	// Scaled dot-product attention (simplified single-head)
-	// Attention scores: Q * K^T / sqrt(d_k)
-	KT := K.T()
-
-	scores := mat.NewDense(seqLen, seqLen, nil)
-	scores.Mul(Q, KT)
-
-	// Scale
-	scale := 1.0 / math.Sqrt(float64(headDim))
-	for i := 0; i < seqLen; i++ {
-		for j := 0; j < seqLen; j++ {
-			scores.Set(i, j, scores.At(i, j)*scale)
-		}
+	// Calcular atenção para cada head em paralelo
+	type headResult struct {
+		index  int
+		output *mat.Dense
 	}
 
-	// Softmax por linha
-	for i := 0; i < seqLen; i++ {
-		row := make([]float64, seqLen)
-		for j := 0; j < seqLen; j++ {
-			row[j] = scores.At(i, j)
-		}
-		row = transformerSoftmax(row)
-		for j := 0; j < seqLen; j++ {
-			scores.Set(i, j, row[j])
-		}
+	results := make(chan headResult, nHeads)
+	var wg sync.WaitGroup
+
+	// Lançar goroutines para cada head
+	for h := 0; h < nHeads; h++ {
+		wg.Add(1)
+		go func(headIdx int) {
+			defer wg.Done()
+
+			// Extrair fatias do head
+			headStart := headIdx * headDim
+
+			// Extrair colunas para Q, K, V deste head
+			QHead := mat.NewDense(seqLen, headDim, nil)
+			KHead := mat.NewDense(seqLen, headDim, nil)
+			VHead := mat.NewDense(seqLen, headDim, nil)
+
+			for i := 0; i < seqLen; i++ {
+				for j := 0; j < headDim; j++ {
+					QHead.Set(i, j, Q.At(i, headStart+j))
+					KHead.Set(i, j, K.At(i, headStart+j))
+					VHead.Set(i, j, V.At(i, headStart+j))
+				}
+			}
+
+			// Scaled dot-product attention para este head
+			// Attention scores: Q * K^T / sqrt(d_k)
+			KTHead := KHead.T()
+
+			scores := mat.NewDense(seqLen, seqLen, nil)
+			scores.Mul(QHead, KTHead)
+
+			// Scale
+			scale := 1.0 / math.Sqrt(float64(headDim))
+			for i := 0; i < seqLen; i++ {
+				for j := 0; j < seqLen; j++ {
+					scores.Set(i, j, scores.At(i, j)*scale)
+				}
+			}
+
+			// Softmax por linha
+			for i := 0; i < seqLen; i++ {
+				row := make([]float64, seqLen)
+				for j := 0; j < seqLen; j++ {
+					row[j] = scores.At(i, j)
+				}
+				row = transformerSoftmax(row)
+				for j := 0; j < seqLen; j++ {
+					scores.Set(i, j, row[j])
+				}
+			}
+
+			// Weighted sum: scores * V
+			headOutput := mat.NewDense(seqLen, headDim, nil)
+			headOutput.Mul(scores, VHead)
+
+			results <- headResult{headIdx, headOutput}
+		}(h)
 	}
 
-	// Weighted sum: scores * V
+	// Fechar channel quando todas goroutines terminarem
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Concatenar outputs dos heads
+	headOutputs := make([]*mat.Dense, nHeads)
+	for result := range results {
+		headOutputs[result.index] = result.output
+	}
+
+	// Concatenar todos os heads
 	output := mat.NewDense(seqLen, dModel, nil)
-	output.Mul(scores, V)
+	for h := 0; h < nHeads; h++ {
+		for i := 0; i < seqLen; i++ {
+			for j := 0; j < headDim; j++ {
+				output.Set(i, h*headDim+j, headOutputs[h].At(i, j))
+			}
+		}
+	}
 
 	// Output projection
 	result := mat.NewDense(seqLen, dModel, nil)
 	result.Mul(output, layer.WO)
-
-	// Residual connection
-	for i := 0; i < seqLen; i++ {
-		for j := 0; j < dModel; j++ {
-			result.Set(i, j, result.At(i, j)+X.At(i, j))
-		}
-	}
 
 	return result
 }
@@ -836,6 +925,45 @@ func applyLayerNorm(X *mat.Dense, seqLen, dModel int) *mat.Dense {
 		for j := 0; j < dModel; j++ {
 			norm := (X.At(i, j) - mean) / std
 			result.Set(i, j, norm)
+		}
+	}
+
+	return result
+}
+
+// addResidualAndNorm adiciona residual connection e aplica layer normalization
+// Implementa: LayerNorm(x + Sublayer(x)) conforme "Attention Is All You Need"
+func addResidualAndNorm(output *mat.Dense, residual *mat.Dense, seqLen, dModel int) *mat.Dense {
+	result := mat.NewDense(seqLen, dModel, nil)
+
+	for i := 0; i < seqLen; i++ {
+		// Step 1: Residual Connection (Add)
+		// x + Sublayer(x)
+		added := mat.NewDense(1, dModel, nil)
+		for j := 0; j < dModel; j++ {
+			val := residual.At(i, j) + output.At(i, j)
+			added.Set(0, j, val)
+		}
+
+		// Step 2: Calcular mean e variance do residual
+		sum := 0.0
+		for j := 0; j < dModel; j++ {
+			sum += added.At(0, j)
+		}
+		mean := sum / float64(dModel)
+
+		varSum := 0.0
+		for j := 0; j < dModel; j++ {
+			diff := added.At(0, j) - mean
+			varSum += diff * diff
+		}
+		variance := varSum / float64(dModel)
+		std := math.Sqrt(variance + 1e-5)
+
+		// Step 3: Layer Normalization
+		for j := 0; j < dModel; j++ {
+			val := (added.At(0, j) - mean) / std
+			result.Set(i, j, val)
 		}
 	}
 

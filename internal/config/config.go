@@ -71,7 +71,7 @@ func DefaultConfig() *Config {
 			NumLayers:    6,
 			MaxSeqLen:    256,
 			FFHidden:     1024,
-			MaxVocab:     5000,
+			MaxVocab:     8000,
 			DropoutRate:  0.1,
 			WeightDecay:  0.01,
 		},
