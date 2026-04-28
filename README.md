@@ -243,9 +243,53 @@ Cada ambiente tem configurações otimizadas:
 | **Batch** | 16 | 16 | 32 | 8 |
 | **Host** | localhost | localhost | 0.0.0.0 | localhost |
 
-### Arquivo .env.example
+### Script Helper (Opcional)
 
-Um template completo está disponível em `.env.example` com todas as variáveis documentadas.
+Para facilitar o uso com diferentes ambientes, use o script `run.sh`:
+
+```bash
+# Compilar automaticamente e mostrar ajuda
+./run.sh
+
+# Treinar em produção
+./run.sh production train
+
+# Servir em staging
+./run.sh staging serve
+
+# Teste rápido
+./run.sh test train
+
+# Baixar dataset em desenvolvimento
+./run.sh development download
+```
+
+O script:
+- ✅ Compila automaticamente se necessário
+- ✅ Configura variáveis de ambiente
+- ✅ Mostra configuração ativa
+- ✅ Usa interface colorida
+
+### Arquivos de Template
+
+**`.env.example`**: Template completo com todas as variáveis de ambiente documentadas.
+
+```bash
+# Copiar para .env
+cp .env.example .env
+
+# Editar conforme necessário
+nano .env
+
+# Carregar
+source .env
+```
+
+**`config.*.json`**: Configurações por ambiente:
+- `config.json` - Desenvolvimento (padrão)
+- `config.production.json` - Produção
+- `config.staging.json` - Staging/Homologação
+- `config.test.json` - Testes rápidos
 
 ### Validações Robustas
 
