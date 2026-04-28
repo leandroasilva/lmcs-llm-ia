@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/leandroasilva/lmcs-llm-ia/model"
+	"github.com/leandroasilva/lmcs-llm-ia/pkg/model"
 )
 
 // AskRequest representa uma requisição de geração de texto
