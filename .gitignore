@@ -17,6 +17,9 @@ livros
 # Configuração local
 config.json
 
+# Ambiente (contém secrets)
+.env
+
 # IDE
 .vscode/
 .idea/

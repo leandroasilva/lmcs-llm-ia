@@ -1,0 +1,26 @@
+{
+  "environment": "production",
+  "training": {
+    "epochs": 500,
+    "learning_rate": 0.0005,
+    "batch_size": 32,
+    "temperature": 0.7,
+    "top_k": 30,
+    "d_model": 512,
+    "n_heads": 8,
+    "num_layers": 6,
+    "max_seq_len": 256,
+    "ff_hidden": 1024,
+    "max_vocab": 5000,
+    "dropout_rate": 0.1,
+    "weight_decay": 0.01
+  },
+  "server": {
+    "port": ":8080",
+    "host": "0.0.0.0"
+  },
+  "paths": {
+    "model_path": "lmcs-model.bin",
+    "input_file": "dataset/data/train_enriched.txt"
+  }
+}

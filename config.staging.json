@@ -1,0 +1,26 @@
+{
+  "environment": "staging",
+  "training": {
+    "epochs": 200,
+    "learning_rate": 0.001,
+    "batch_size": 16,
+    "temperature": 0.7,
+    "top_k": 30,
+    "d_model": 256,
+    "n_heads": 4,
+    "num_layers": 4,
+    "max_seq_len": 256,
+    "ff_hidden": 512,
+    "max_vocab": 3000,
+    "dropout_rate": 0.15,
+    "weight_decay": 0.01
+  },
+  "server": {
+    "port": ":8080",
+    "host": "localhost"
+  },
+  "paths": {
+    "model_path": "lmcs-model.bin",
+    "input_file": "dataset/data/train_enriched.txt"
+  }
+}

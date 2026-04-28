@@ -154,9 +154,139 @@ go build -o lmcs-llm ./cmd/lmcs-llm/
 ./lmcs-llm <comando> --config <arquivo>  # Especificar config
 ```
 
-## ⚙️ Configuração (config.json)
+## ⚙️ Configuração
 
-```json
+### Arquivos de Configuração por Ambiente
+
+O projeto suporta múltiplos ambientes com configurações otimizadas:
+
+```bash
+# Desenvolvimento (padrão)
+./lmcs-llm train --config config.json
+
+# Produção
+./lmcs-llm train --config config.production.json
+
+# Staging (homologação)
+./lmcs-llm train --config config.staging.json
+
+# Testes (rápido)
+./lmcs-llm train --config config.test.json
+```
+
+### Variáveis de Ambiente
+
+Todas as configurações podem ser sobrescritas via variáveis de ambiente:
+
+```bash
+# Usar variáveis de ambiente
+export LMCS_ENV=production
+export LMCS_EPOCHS=500
+export LMCS_D_MODEL=512
+export LMCS_PORT=:8080
+
+./lmcs-llm train
+
+# Ou inline
+LMCS_ENV=test LMCS_EPOCHS=10 ./lmcs-llm train
+```
+
+**Todas as variáveis disponíveis:**
+
+| Variável | Descrição | Exemplo |
+|----------|-----------|--------|
+| `LMCS_ENV` | Ambiente (development/staging/production/test) | `production` |
+| `LMCS_EPOCHS` | Número de épocas | `300` |
+| `LMCS_LEARNING_RATE` | Taxa de aprendizado | `0.001` |
+| `LMCS_BATCH_SIZE` | Tamanho do batch | `16` |
+| `LMCS_TEMPERATURE` | Temperatura de geração | `0.7` |
+| `LMCS_TOP_K` | Top-K sampling | `30` |
+| `LMCS_D_MODEL` | Dimensão do modelo (múltiplo de 64) | `512` |
+| `LMCS_N_HEADS` | Attention heads (deve dividir d_model) | `8` |
+| `LMCS_NUM_LAYERS` | Camadas Transformer | `6` |
+| `LMCS_MAX_SEQ_LEN` | Tamanho da sequência (múltiplo de 32) | `256` |
+| `LMCS_FF_HIDDEN` | Hidden size FFN | `1024` |
+| `LMCS_MAX_VOCAB` | Tamanho do vocabulário | `5000` |
+| `LMCS_DROPOUT_RATE` | Taxa de dropout | `0.1` |
+| `LMCS_WEIGHT_DECAY` | Weight decay L2 | `0.01` |
+| `LMCS_PORT` | Porta do servidor | `:8080` |
+| `LMCS_HOST` | Host do servidor | `localhost` |
+| `LMCS_MODEL_PATH` | Caminho do modelo | `lmcs-model.bin` |
+| `LMCS_INPUT_FILE` | Arquivo de dataset | `dataset/data/train_enriched.txt` |
+
+**Arquivo .env:**
+
+```bash
+# Copiar template
+cp .env.example .env
+
+# Editar
+nano .env
+
+# Carregar variáveis
+source .env
+
+# Executar
+./lmcs-llm train
+```
+
+### Presets de Ambiente
+
+Cada ambiente tem configurações otimizadas:
+
+| Parâmetro | Development | Staging | Production | Test |
+|-----------|-------------|---------|------------|------|
+| **Épocas** | 300 | 200 | 500 | 10 |
+| **d_model** | 512 | 256 | 512 | 64 |
+| **Camadas** | 6 | 4 | 6 | 2 |
+| **Dropout** | 0.05 | 0.15 | 0.1 | 0.0 |
+| **Batch** | 16 | 16 | 32 | 8 |
+| **Host** | localhost | localhost | 0.0.0.0 | localhost |
+
+### Arquivo .env.example
+
+Um template completo está disponível em `.env.example` com todas as variáveis documentadas.
+
+### Validações Robustas
+
+O sistema de configuração inclui validações automáticas para prevenir erros:
+
+**Regras de Validação:**
+
+- ✅ `d_model` deve ser múltiplo de 64 (ex: 64, 128, 256, 512)
+- ✅ `d_model` deve ser divisível por `n_heads`
+- ✅ `max_seq_len` deve ser múltiplo de 32
+- ✅ `ff_hidden` deve ser >= `d_model`
+- ✅ `max_vocab` deve estar entre 100 e 50,000
+- ✅ `dropout_rate` deve estar entre 0 e 0.5
+- ✅ `weight_decay` deve estar entre 0 e 0.5
+- ✅ `epochs` não deve exceder 10,000
+- ✅ `batch_size` não deve exceder 256
+
+**Exemplo de erro de validação:**
+
+```bash
+$ LMCS_D_MODEL=100 LMCS_N_HEADS=3 ./lmcs-llm train
+Erro: configurações inválidas:
+  - d_model deve ser múltiplo de 64
+  - d_model (100) deve ser divisível por n_heads (3)
+```
+
+### Precedência de Configuração
+
+As configurações são aplicadas na seguinte ordem (última sobrescreve anterior):
+
+1. **Defaults hardcoded** (valores padrão do código)
+2. **Arquivo de configuração** (config.json, config.production.json, etc.)
+3. **Variáveis de ambiente** (LMCS_EPOCHS, LMCS_D_MODEL, etc.)
+
+```bash
+# config.json tem epochs=300
+# Mas variável de ambiente sobrescreve
+LMCS_EPOCHS=500 ./lmcs-llm train  # Usará 500 épocas
+```
+
+## 📝 Configuração JSON (Exemplo)
 {
   "training": {
     "epochs": 300,
