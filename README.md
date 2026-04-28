@@ -1,126 +1,177 @@
 # LMCS LLM IA - Assistente Conversacional com Transformer
 
-Um modelo de linguagem **Transformer Small** implementado do zero em Go, treinado com dataset enriquecido de atendimento ao cliente brasileiro, com interface de chat moderna estilo ChatGPT/DeepSeek.
+Um modelo de linguagem **Transformer** implementado do zero em **Go puro**, treinado com dataset de atendimento ao cliente brasileiro em português, com interface de chat moderna estilo ChatGPT.
 
 ## 🚀 Funcionalidades
 
-- **Arquitetura Transformer**: Modelo Small com multi-head self-attention, positional encoding e feed-forward networks
+- **Arquitetura Transformer Completa**: Multi-head self-attention, positional encoding, feed-forward networks, layer normalization
+- **Beam Search**: Geração de texto com beam search (width=5) para melhor coerência
+- **Regularização Avançada**: Dropout (0.1) e Weight Decay (0.01) para prevenir overfitting
 - **Dataset Enriquecido**: Metadados completos (intent, sentiment, sector) para contexto rico
-- **Tokenização por Palavras**: Vocabulário de 3,600+ palavras vs 47 caracteres (LSTM antigo)
-- **Contexto Longo**: 256 tokens de contexto vs 50 caracteres
+- **Tokenização por Palavras**: Vocabulário de 3,600+ palavras para melhor semântica
+- **Contexto Longo**: 256 tokens de contexto para conversas mais coerentes
 - **Interface Moderna**: Chat estilo ChatGPT com design escuro e responsivo
 - **API REST**: Endpoints JSON para integração com outros sistemas
 - **Treinamento Incremental**: Pause, teste e continue de onde parou
-- **Checkpoint Automático**: Modelo salva progresso automaticamente
-- **100% Go**: Sem dependências Python, scripts em Go puro
-- **Configurável**: Controle de temperatura, top-k sampling e hiperparâmetros do Transformer
+- **CLI Organizada**: Subcomandos separados para download, treino e servir
+- **100% Go**: Sem dependências Python, código Go puro com gonum para matemática
 
 ## 📁 Estrutura do Projeto
 
 ```
 lmcs-llm-ia/
-├── main.go                      # Ponto de entrada da aplicação
-├── config/
-│   └── config.go               # Gerenciamento de configurações
-├── model/
-│   ├── transformer.go          # Implementação Transformer completa
-│   ├── model.go                # Modelo legado (softmax regression)
-│   └── utils.go                # Funções auxiliares (Softmax, CrossEntropyLoss)
-├── api/
-│   └── handlers.go             # Handlers HTTP da API
-├── dataset/
-│   ├── downloader.go           # Download dataset simples
-│   ├── download_enriched.go    # Download dataset COM metadados
-│   └── data/
-│       ├── train.txt           # Dataset simples (legado)
-│       └── train_enriched.txt  # Dataset enriquecido (RECOMENDADO)
-├── static/
-│   ├── index.html              # Frontend - Interface de chat
-│   ├── style.css               # Estilos CSS modernos
-│   └── app.js                  # JavaScript (prompt conversacional)
-├── config.json                 # Configuração atual do projeto
-├── config.example.json         # Exemplo de configuração
-├── go.mod                      # Módulo Go e dependências
-└── lmcs-llm                    # Binário compilado
+├── cmd/                          # Binários e subcomandos
+│   ├── lmcs-llm/
+│   │   └── main.go              # CLI principal (dispatcher)
+│   ├── download/
+│   │   └── download.go          # Comando de download
+│   ├── train/
+│   │   └── train.go             # Comando de treinamento
+│   └── serve/
+│       └── serve.go             # Comando de servidor
+│
+├── internal/                     # Pacotes privados
+│   ├── api/
+│   │   └── handlers.go          # HTTP handlers e rotas
+│   ├── config/
+│   │   └── config.go            # Gerenciamento de configuração
+│   ├── dataset/
+│   │   ├── downloader.go        # Download dataset simples
+│   │   └── download_enriched.go # Download com metadados
+│   └── model/
+│       ├── transformer.go       # Modelo Transformer completo
+│       ├── model.go             # Modelo legado (softmax regression)
+│       └── utils.go             # Funções utilitárias
+│
+├── static/                       # Frontend web
+│   ├── index.html               # Interface de chat
+│   ├── style.css                # Estilos CSS
+│   └── app.js                   # JavaScript do chat
+│
+├── config.json                   # Configuração ativa
+├── config.example.json           # Template de configuração
+├── go.mod                        # Módulo Go
+└── README.md                     # Este arquivo
 ```
 
-## 🛠️ Instalação e Execução
+### Organização Go Standard
+
+O projeto segue o **layout padrão do Go**:
+
+- **`cmd/`**: Binários e interfaces de linha de comando
+  - Cada subcomando é um pacote separado
+  - `lmcs-llm/main.go` é o dispatcher principal
+  
+- **`internal/`**: Código privado (não importável externamente)
+  - `model/`: Lógica do modelo Transformer
+  - `api/`: Handlers HTTP
+  - `dataset/`: Download e processamento de dados
+  - `config/`: Configurações e validação
+
+- **`static/`**: Assets públicos (frontend)
+
+## 🛠️ Instalação e Uso Rápido
 
 ### Pré-requisitos
 
-- Go 1.22 ou superior
-- gonum/mat (operações matriciais otimizadas com BLAS)
-- Conexão com internet (para download do dataset)
+- **Go 1.24+** (recomendado)
+- **Conexão com internet** (para download do dataset)
+- **macOS/Linux/Windows** (multi-plataforma)
 
-### 1. Compilar o Projeto
+### 1. Compilar
 
 ```bash
 cd /Volumes/Dock/workspace/lmcs/lmcs-llm-ia
 
+# Instalar dependências
+go mod download
+
 # Compilar
-go build -o lmcs-llm
+go build -o lmcs-llm ./cmd/lmcs-llm/
 ```
 
-### 2. Baixar Dataset Enriquecido (Recomendado)
+### 2. Baixar Dataset
 
 ```bash
-# Baixar dataset COM metadados (intent, sentiment, sector)
-./lmcs-llm --download-enriched
+# Dataset enriquecido com metadados (RECOMENDADO)
+./lmcs-llm download --enriched
 
-# OU dataset simples (sem metadados)
-./lmcs-llm --download-dataset
+# Ou dataset simples
+./lmcs-llm download
 ```
 
-**Dataset Enriquecido inclui:**
-- 755 conversas reais de atendimento
-- 10 categorias de intent (compra, suporte, reclamação, etc.)
-- 3 sentiments balanceados (positive, negative, neutral)
-- 8 sectors (telecom, saúde, financeiro, etc.)
+**O dataset inclui:**
+- 755+ conversas reais de atendimento em português
+- Metadados: intent (10 categorias), sentiment (3 classes), sector (8 domínios)
+- 873 KB de dados de treinamento
 - Formato: `[INTENT:x] [SENTIMENT:y] [SECTOR:z]`
 
-### 3. Configurar
+### 3. Treinar Modelo
 
 ```bash
-# Configuração já está otimizada em config.json
-# Para personalizar:
-nano config.json
+# Treinar do zero ou continuar treinamento
+./lmcs-llm train
+
+# Usar configuração customizada
+./lmcs-llm train --config my-config.json
 ```
 
-### 4. Executar e Treinar
+### 4. Iniciar Servidor
 
 ```bash
-# Executar (treina automaticamente se não houver modelo)
-./lmcs-llm
+# Servir modelo treinado
+./lmcs-llm serve
 
-# Treinar mais épocas (incremental)
-./lmcs-llm --train
-
-# Ver opções
-./lmcs-llm --help
+# Com configuração customizada
+./lmcs-llm serve --config custom.json
 ```
 
 ### 5. Acessar
 
-- **Frontend Chat**: http://localhost:8080
+- **Chat Web**: http://localhost:8080
 - **API Health**: http://localhost:8080/api/health
-- **API Generate**: POST http://localhost:8080/api/ask
+- **API Ask**: POST http://localhost:8080/api/ask
 
-## 📝 Configuração (config.json)
+## 📖 Comandos da CLI
+
+```bash
+# Ver ajuda completa
+./lmcs-llm help
+
+# Download de datasets
+./lmcs-llm download                    # Dataset simples
+./lmcs-llm download --enriched         # Dataset com metadados
+
+# Treinamento
+./lmcs-llm train                       # Treinar/continuar
+./lmcs-llm train --config custom.json  # Config customizada
+
+# Servidor
+./lmcs-llm serve                       # Iniciar servidor
+./lmcs-llm serve --config custom.json  # Config customizada
+
+# Opções globais
+./lmcs-llm <comando> --config <arquivo>  # Especificar config
+```
+
+## ⚙️ Configuração (config.json)
 
 ```json
 {
   "training": {
-    "epochs": 30,
+    "epochs": 300,
     "learning_rate": 0.001,
     "batch_size": 16,
     "temperature": 0.7,
     "top_k": 30,
-    "d_model": 128,
-    "n_heads": 4,
-    "num_layers": 2,
+    "d_model": 512,
+    "n_heads": 8,
+    "num_layers": 6,
     "max_seq_len": 256,
-    "ff_hidden": 256,
-    "max_vocab": 5000
+    "ff_hidden": 1024,
+    "max_vocab": 5000,
+    "dropout_rate": 0.1,
+    "weight_decay": 0.01
   },
   "server": {
     "port": ":8080",
@@ -135,32 +186,102 @@ nano config.json
 
 ### Parâmetros do Transformer
 
-| Parâmetro | Descrição | Valor Padrão |
-|-----------|-----------|--------------|
-| `d_model` | Dimensão do modelo (embeddings) | 128 |
-| `n_heads` | Número de attention heads | 4 |
-| `num_layers` | Camadas do Transformer | 2 |
-| `max_seq_len` | Tamanho máximo da sequência | 256 |
-| `ff_hidden` | Hidden size do feed-forward | 256 |
-| `max_vocab` | Tamanho máximo do vocabulário | 5000 |
+| Parâmetro | Descrição | Valor Atual | Impacto |
+|-----------|-----------|-------------|---------|
+| `d_model` | Dimensão do embedding | 512 | Capacidade do modelo |
+| `n_heads` | Attention heads | 8 | Paralelismo de atenção |
+| `num_layers` | Camadas Transformer | 6 | Profundidade da rede |
+| `max_seq_len` | Tamanho máximo da sequência | 256 | Contexto da conversa |
+| `ff_hidden` | Hidden size do feed-forward | 1024 | Capacidade de processamento |
+| `max_vocab` | Tamanho máximo do vocabulário | 5000 | Cobertura de palavras |
+| `dropout_rate` | Taxa de dropout | 0.1 | Regularização |
+| `weight_decay` | Weight decay (L2) | 0.01 | Regularização |
+| `epochs` | Épocas de treinamento | 300 | Duração do treino |
+| `learning_rate` | Taxa de aprendizado | 0.001 | Velocidade de convergência |
+| `temperature` | Criatividade na geração | 0.7 | Controle de aleatoriedade |
+| `top_k` | Top-K sampling | 30 | Qualidade do texto |
+
+## 🧠 Arquitetura do Modelo
+
+### Transformer Small
+
+**Componentes:**
+
+1. **Embedding Layer**
+   - Token Embedding: [vocab_size, d_model]
+   - Positional Encoding: [max_seq_len, d_model]
+
+2. **Multi-Head Self-Attention** (6 camadas)
+   - 8 attention heads em paralelo
+   - Scaled dot-product attention
+   - Q, K, V projections
+   - Residual connections
+
+3. **Feed-Forward Network**
+   - Two-layer MLP: 512 → 1024 → 512
+   - ReLU activation
+   - Layer normalization
+
+4. **Output Layer**
+   - Linear projection: [d_model, vocab_size]
+   - Softmax para probabilidades
+
+**Hiperparâmetros:**
+- **Tipo**: Word-level Transformer Language Model
+- **Vocabulário**: ~3,600 palavras
+- **Contexto**: 256 tokens
+- **Parâmetros**: ~50M pesos treináveis
+- **Inicialização**: Xavier/Glorot
+
+### Técnicas de Regularização
+
+1. **Dropout (0.1)**
+   - Randomamente zera 10% dos neurônios durante treino
+   - Previne overfitting e co-adaptação
+   - Scaling automático durante inferência
+
+2. **Weight Decay (0.01)**
+   - L2 regularization em todos os pesos
+   - Mantém pesos pequenos e generalizeis
+   - Aplicado durante update de gradientes
+
+3. **Gradient Clipping (5.0)**
+   - Limita magnitude dos gradientes
+   - Previne exploding gradients
+   - Estabiliza treinamento
+
+### Beam Search Decoding
+
+Ao invés de greedy sampling, o modelo usa **beam search** com width=5:
+
+1. Mantém 5 candidatos de sequência simultaneamente
+2. Expande cada candidato com top-K tokens
+3. Seleciona os 5 melhores por log-probabilidade normalizada
+4. Para quando encontra token `<EOS>` ou atinge limite
+
+**Benefícios:**
+- ✅ Maior coerência textual
+- ✅ Menos repetições
+- ✅ Melhor estrutura gramatical
+- ✅ Respostas mais contextuais
 
 ## 🎨 Interface de Chat
 
-### Recursos do Frontend
+### Recursos
 
-- **Sidebar**: Histórico de conversas salvas no localStorage
-- **Configurações**: Controle deslizante de temperatura e top-k
-- **Chat Responsivo**: Interface estilo ChatGPT com tema escuro
-- **Sugestões**: Botões de prompts para começar rapidamente
+- **Sidebar**: Histórico de conversas (localStorage)
+- **Configurações**: Controle de temperatura e top-k
+- **Design Responsivo**: Tema escuro estilo ChatGPT
+- **Sugestões**: Prompts rápidos para começar
 - **Auto-save**: Conversas salvas automaticamente
 
 ### Como Usar
 
-1. Abra http://localhost:8080 no navegador
+1. Acesse http://localhost:8080
 2. Clique em "Novo Chat" ou use uma sugestão
 3. Digite sua mensagem e pressione Enter
-4. Ajuste a temperatura para mais/menos criatividade
-5. Alterne entre conversas no histórico
+4. Ajuste temperatura para mais/menos criatividade
+5. Navegue pelo histórico na sidebar
 
 ## 🔌 API Endpoints
 
@@ -174,14 +295,14 @@ Response:
   "status": "ok",
   "model": "Transformer",
   "vocab": 3613,
-  "d_model": 128,
-  "heads": 4,
-  "layers": 2,
-  "epochs": 30
+  "d_model": 512,
+  "heads": 8,
+  "layers": 6,
+  "epochs": 300
 }
 ```
 
-### Gerar Texto
+### Gerar Resposta
 
 ```bash
 POST /api/ask
@@ -195,17 +316,17 @@ Content-Type: application/json
 
 Response:
 {
-  "answer": "Olá! Tudo bem sim! Como posso ajudar você hoje?",
+  "answer": "Olá! Tudo bem! Como posso ajudar você hoje?",
   "model": "Transformer",
   "elapsed_ms": 45,
   "vocab_size": 3613,
-  "d_model": 128,
+  "d_model": 512,
   "temperature": 0.7,
   "top_k": 30
 }
 ```
 
-### Exemplos de Uso
+### Exemplos
 
 ```bash
 # Via curl
@@ -227,143 +348,88 @@ fetch('/api/ask', {
 .then(data => console.log(data.answer));
 ```
 
-## 🧠 Sobre o Modelo
+## 📊 Dataset
 
-### Arquitetura Transformer Small
+### Fonte
 
-**Componentes Principais:**
+**HuggingFace**: Brazilian Customer Service Conversations
 
-1. **Embedding Layer**
-   - Token Embedding: [vocab_size, d_model]
-   - Positional Encoding: [max_seq_len, d_model]
+### Estatísticas
 
-2. **Multi-Head Self-Attention**
-   - 4 attention heads em paralelo
-   - Scaled dot-product attention
-   - Q, K, V projections
-   - Residual connections
-
-3. **Feed-Forward Network**
-   - Two-layer MLP: 128 → 256 → 128
-   - ReLU activation
-   - Layer normalization
-
-4. **Output Layer**
-   - Linear projection: [d_model, vocab_size]
-   - Softmax para probabilidades
-
-**Hiperparâmetros:**
-- **Tipo**: Word-level Transformer Language Model
-- **Vocabulário**: 3,613 palavras
-- **Contexto**: 256 tokens
-- **Parâmetros**: ~500K pesos treináveis
-- **Inicialização**: Xavier/Glorot uniform
-
-### Dataset Enriquecido
-
-**Fonte:** HuggingFace - Brazilian Customer Service Conversations
-
-**Estatísticas:**
 - **755 conversas** completas
 - **5,900 diálogos** (usuário + assistente)
-- **873 KB** de dados de treinamento
+- **873 KB** de dados
 - **146,792 tokens** após tokenização
 
-**Metadados Incluídos:**
+### Metadados
 
-| Metadado | Valores | Distribuição |
-|----------|---------|--------------|
-| **Intent** | 10 categorias | compra, suporte, reclamação, etc. |
+| Metadado | Valores | Exemplos |
+|----------|---------|----------|
+| **Intent** | 10 categorias | compra, suporte, reclamação, cancelamento |
 | **Sentiment** | 3 classes | positive (33%), negative (33%), neutral (33%) |
-| **Sector** | 8 domínios | telecom, saúde, financeiro, etc. |
+| **Sector** | 8 domínios | telecom, saúde, financeiro, varejo |
 
-**Formato do Dataset:**
+### Formato
 
 ```
 [INTENT:compra] [SENTIMENT:negative] [SECTOR:telecom]
-Usuário: Oi, vc pode me ajudar? Quero contratar um plano de internet
-Assistente: Beleza, posso te ajudar com isso! Qual é o problema?
-Usuário: Não consigo avançar na compra, da erro
-Assistente: Entendi, vamos tentar resolver isso...
+Usuário: Oi, quero contratar um plano de internet
+Assistente: Claro! Posso ajudar com isso. Qual velocidade você precisa?
+Usuário: Uns 100mega está bom
+Assistente: Perfeito! Temos ótimas opções de 100 mega...
 ```
 
-**Benefícios dos Metadados:**
+### Benefícios dos Metadados
+
 - ✅ Modelo aprende padrões por **intenção**
 - ✅ Entende **tom emocional** da conversa
 - ✅ Conhece o **domínio** específico
 - ✅ Gera respostas mais **contextualizadas**
-- ✅ Melhor **generalização** para novos cenários
+- ✅ Melhor **generalização**
 
-### Download do Dataset
+## 🚦 Treinamento Incremental
 
-```bash
-# Dataset enriquecido (RECOMENDADO)
-./lmcs-llm --download-enriched
+### Como Funciona
 
-# Dataset simples
-./lmcs-llm --download-dataset
-```
+1. Modelo salva `EpochsTrained` no checkpoint
+2. Carrega modelo existente automaticamente
+3. Continua treinamento de onde parou
+4. Learning rate decay exponencial (0.95^epoch)
+5. Épocas são acumulativas
 
-**O download:**
-1. Conecta na API do HuggingFace
-2. Baixa 755 conversas com metadados
-3. Processa e formata em português
-4. Gera `train_enriched.txt` com contexto rico
-5. Exibe estatísticas detalhadas
-
-### Modo Conversacional
-
-**Como Funciona:**
-
-1. Usuário digita: "Quero contratar um plano"
-2. Modelo processa com contexto de 256 tokens
-3. Attention mechanism identifica padrões relevantes
-4. Gera resposta token por token
-5. Retorna resposta completa
-
-**Detecção Inteligente:**
-- Para ao detectar mudança de turno
-- Remove tokens especiais automaticamente
-- Limpa formatação excessiva
-- Retorna apenas a resposta do assistente
-
-### Treinamento Incremental
+### Exemplo
 
 ```bash
-# Ver épocas treinadas
-./lmcs-llm
-# Output: "Época 30/30 - Loss: 2.345"
+# Primeira vez: treina 300 épocas do zero
+./lmcs-llm train
+# Output: "Total de épocas treinadas: 300"
 
-# Treinar mais épocas
-./lmcs-llm --train
+# Adicionar mais 100 épocas
+./lmcs-llm train
+# Output: "Continuando treinamento: 300 épocas já treinadas"
+#         "Total de épocas treinadas: 400"
 ```
 
-**Como Funciona:**
-- Modelo guarda `EpochsTrained` no checkpoint
-- Salvamento automático após cada sessão
-- Learning rate decay exponencial (0.95^epoch)
-- Épocas acumulativas
-
-### Performance Esperada
+### Performance
 
 **Treinamento:**
-- **30 épocas**: ~15-30 minutos
+- **300 épocas**: ~2-4 horas (depende do hardware)
 - **Velocidade**: ~30-60 segundos/época
-- **Memória**: ~500MB-1GB
-- **CPU**: 800% (8 cores em uso total)
+- **Memória**: ~2-4 GB
+- **CPU**: Multi-core (GOMAXPROCS automático)
 
 **Inferência:**
 - **Latência**: <100ms para 100 tokens
-- **Qualidade**: Respostas conversacionais coerentes
+- **Beam Search**: ~3-5x mais lento que greedy
 - **Temperatura ótima**: 0.6-0.8
 
-### Temperatura e Sampling
+## 🎛️ Temperatura e Sampling
 
 | Temperatura | Comportamento | Uso Recomendado |
 |-------------|---------------|-----------------|
-| 0.1-0.5 | Conservador, repetitivo | Fatos, dados |
+| 0.1-0.3 | Muito conservador | Fatos, dados técnicos |
 | **0.6-0.8** | **Equilibrado** | **Conversas (ideal)** |
-| 0.9-1.2 | Criativo, variado | Brainstorming |
+| 0.9-1.2 | Criativo | Brainstorming |
 | 1.3-2.0 | Muito diversificado | Arte, poesia |
 
 **Top-K Sampling:**
@@ -371,37 +437,29 @@ Assistente: Entendi, vamos tentar resolver isso...
 - Reduz nonsense e melhora coerência
 - Valor recomendado: 30-40
 
-## 🏗️ Arquitetura do Código
+## 🏗️ Boas Práticas Go
 
-### Pacotes Go
+O projeto segue padrões da comunidade Go:
 
-```
-main.go              → Entry point, CLI, training loop
-config/config.go     → Config management, validation
-model/transformer.go → Transformer architecture
-model/utils.go       → Math utilities (Softmax, Loss)
-api/handlers.go      → HTTP handlers, routing
-dataset/*.go         → Dataset downloaders
-```
-
-### Boas Práticas Go
-
-- ✅ **Separação de responsabilidades**: Pacotes organizados
-- ✅ **Tratamento de erros**: Verificação e propagação
-- ✅ **Thread-safety**: Mutex onde necessário
-- ✅ **Interfaces implícitas**: Polimorfismo Go-style
+- ✅ **Standard Layout**: `cmd/`, `internal/`, `pkg/`
+- ✅ **Separação de Responsabilidades**: Pacotes coesos
+- ✅ **Tratamento de Erros**: Verificação e propagação explícita
+- ✅ **Thread-safety**: Mutex e atomics onde necessário
 - ✅ **Documentação**: Comentários em código exportado
-- ✅ **100% Go**: Sem Python ou scripts externos
+- ✅ **Sem Dependências Externas**: Apenas gonum (matemática)
+- ✅ **Build Reprodutível**: `go.mod` com versões fixas
 
-## 📊 Comparação: LSTM vs Transformer
+## 📈 Comparação: LSTM vs Transformer
 
 | Feature | LSTM (Antigo) | Transformer (Atual) |
 |---------|---------------|---------------------|
 | **Tipo** | Character-level | Word-level |
-| **Vocabulário** | 47 caracteres | 3,613 palavras |
+| **Vocabulário** | 47 caracteres | 3,600+ palavras |
 | **Contexto** | 50 chars | 256 tokens |
-| **Metadados** | ❌ Não | ✅ Sim (intent, sentiment, sector) |
+| **Metadados** | ❌ Não | ✅ Sim |
 | **Arquitetura** | LSTM gates | Multi-head attention |
+| **Regularização** | Básica | Dropout + Weight Decay |
+| **Decoding** | Greedy | Beam Search (width=5) |
 | **Paralelização** | Sequencial | Paralela |
 | **Qualidade** | Baixa | Alta |
 | **Coerência** | Fraca | Forte |
@@ -411,11 +469,10 @@ dataset/*.go         → Dataset downloaders
 ### Porta já em uso
 
 ```bash
-# Matar processo na porta 8080
+# macOS/Linux
 lsof -ti:8080 | xargs kill -9
 
-# Reiniciar
-./lmcs-llm
+# Ou mude a porta em config.json
 ```
 
 ### Modelo corrompido
@@ -423,58 +480,75 @@ lsof -ti:8080 | xargs kill -9
 ```bash
 # Remover e retreinar
 rm -f lmcs-model.bin
-./lmcs-llm
+./lmcs-llm train
 ```
 
 ### Dataset não encontrado
 
 ```bash
-# Baixar dataset enriquecido
-./lmcs-llm --download-enriched
+# Baixar dataset
+./lmcs-llm download --enriched
 
-# Verificar arquivo
+# Verificar
 ls -lh dataset/data/train_enriched.txt
+```
+
+### Erro de compilação
+
+```bash
+# Limpar cache
+go clean -cache -modcache
+
+# Reinstalar dependências
+go mod download
+
+# Recompilar
+go build -o lmcs-llm ./cmd/lmcs-llm/
 ```
 
 ### Testar API
 
 ```bash
-# Testar via curl
+# Health check
+curl http://localhost:8080/api/health
+
+# Gerar resposta
 curl -X POST http://localhost:8080/api/ask \
   -H "Content-Type: application/json" \
   -d '{"question": "Oi, tudo bem?", "temperature": 0.7}'
-
-# Health check
-curl http://localhost:8080/api/health
 ```
 
-## 🎯 Roadmap Futuro
+## 🗺️ Roadmap
 
-- [ ] Implementar backpropagation completa (BPTT)
-- [ ] Adicionar gradient clipping
-- [ ] Suporte a multi-turn conversations
+- [ ] Implementar backpropagation completa (BPTT through all layers)
+- [ ] Adicionar caching de atenção para inferência mais rápida
+- [ ] Suporte a conversas multi-turn com histórico
 - [ ] Fine-tuning por domínio específico
-- [ ] Exportar modelo para ONNX
-- [ ] Adicionar mais datasets multilíngues
-- [ ] Implementar beam search decoding
-- [ ] Adicionar caching de attention para inferência mais rápida
+- [ ] Exportar modelo para formato ONNX
+- [ ] Adicionar datasets multilíngues
+- [ ] Implementar learning rate warmup
+- [ ] Adicionar early stopping baseado em validação
+- [ ] Métricas de avaliação automáticas (perplexity)
+- [ ] Suporte a batch inference
 
 ## 📄 Licença
 
-MIT License
+MIT License - Sinta-se livre para usar, modificar e distribuir.
 
 ## 🤝 Contribuindo
 
 1. Fork o projeto
 2. Crie uma branch (`git checkout -b feature/AmazingFeature`)
-3. Commit suas mudanças (`git commit -m 'Add feature'`)
-4. Push (`git push origin feature/AmazingFeature`)
+3. Commit suas mudanças (`git commit -m 'Add AmazingFeature'`)
+4. Push para a branch (`git push origin feature/AmazingFeature`)
 5. Abra um Pull Request
 
 ## 📧 Contato
 
-Projeto desenvolvido como demonstração de modelo Transformer em Go puro.
+Projeto desenvolvido como demonstração de modelo Transformer implementado do zero em Go puro.
 
 ---
 
 ⭐ **Se este projeto foi útil, dê uma estrela no repositório!**
+
+🚀 **Build com Go 1.24+ | Transformer com Beam Search | Dataset em Português**
