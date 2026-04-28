@@ -8,6 +8,7 @@ import (
 
 	"github.com/leandroasilva/lmcs-llm-ia/internal/config"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/model"
+	"github.com/leandroasilva/lmcs-llm-ia/internal/training"
 )
 
 func RunTrain(configPath string) error {
@@ -85,6 +86,11 @@ func RunTrain(configPath string) error {
 			vocabSize, cfg.Training.DModel, cfg.Training.NHeads, cfg.Training.NumLayers)
 	}
 
+	// Iniciar métricas de treinamento
+	training.GlobalMetrics.StartTraining(cfg.Training.Epochs)
+	training.GlobalMetrics.LearningRate = cfg.Training.LearningRate
+	training.GlobalMetrics.BatchSize = cfg.Training.BatchSize
+
 	// Treinar modelo
 	if modelLoaded {
 		log.Printf("\nContinuando treinamento: %d épocas já treinadas", transformerMdl.EpochsTrained)
@@ -94,7 +100,10 @@ func RunTrain(configPath string) error {
 			cfg.Training.Epochs, cfg.Training.LearningRate, cfg.Training.BatchSize)
 	}
 
-	trainTransformer(transformerMdl, content, cfg)
+	trainTransformer(transformerMdl, content, cfg, training.GlobalMetrics)
+
+	// Finalizar métricas
+	training.GlobalMetrics.EndTraining()
 
 	// Salvar modelo
 	if err := transformerMdl.SaveModel(cfg.Paths.ModelPath); err != nil {
@@ -106,7 +115,7 @@ func RunTrain(configPath string) error {
 	return nil
 }
 
-func trainTransformer(mdl *model.TransformerModel, content string, cfg *config.Config) {
+func trainTransformer(mdl *model.TransformerModel, content string, cfg *config.Config, metrics *training.TrainingMetrics) {
 	startTime := time.Now()
 	initialLR := cfg.Training.LearningRate
 
@@ -166,12 +175,17 @@ func trainTransformer(mdl *model.TransformerModel, content string, cfg *config.C
 
 		if samples > 0 {
 			avgLoss := epochLoss / float64(samples)
+			metrics.ProcessedSamples += samples
+
+			// Atualizar métricas
+			metrics.UpdateEpoch(epoch, avgLoss, metrics.ProcessedSamples)
 
 			// Reportar progresso
 			if epoch%5 == 0 || epoch == 1 {
 				elapsed := time.Since(startTime)
-				log.Printf("Época %d/%d - Loss: %.4f | LR: %.6f | Samples: %d | Tempo: %s\n",
-					epoch, cfg.Training.Epochs, avgLoss, currentLR, samples, elapsed)
+				perplexity := metrics.Perplexity
+				log.Printf("Época %d/%d - Loss: %.4f | Perplexity: %.2f | LR: %.6f | Samples: %d | Tempo: %s\n",
+					epoch, cfg.Training.Epochs, avgLoss, perplexity, currentLR, samples, elapsed)
 			}
 		}
 	}

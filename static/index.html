@@ -46,6 +46,43 @@
                 <span class="status-indicator" id="statusIndicator">Conectando...</span>
             </div>
 
+            <!-- Training Progress Panel -->
+            <div class="training-progress" id="trainingProgress">
+                <div class="progress-header">
+                    <span id="progressTitle">Treinando Modelo...</span>
+                    <span id="progressPercentage">0%</span>
+                </div>
+                <div class="progress-bar-container">
+                    <div class="progress-bar" id="progressBar"></div>
+                </div>
+                <div class="progress-metrics">
+                    <div class="metric-card">
+                        <div class="metric-label">Época</div>
+                        <div class="metric-value" id="metricEpoch">0/0</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Loss</div>
+                        <div class="metric-value" id="metricLoss">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Perplexidade</div>
+                        <div class="metric-value" id="metricPerplexity">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Tempo Decorrido</div>
+                        <div class="metric-value" id="metricElapsed">0s</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Tempo Estimado</div>
+                        <div class="metric-value" id="metricRemaining">-</div>
+                    </div>
+                    <div class="metric-card">
+                        <div class="metric-label">Samples/seg</div>
+                        <div class="metric-value" id="metricSpeed">0</div>
+                    </div>
+                </div>
+            </div>
+
             <div class="chat-messages" id="chatMessages">
                 <div class="welcome-message">
                     <div class="welcome-icon">

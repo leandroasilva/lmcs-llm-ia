@@ -2,6 +2,7 @@
 let conversations = [];
 let currentConversationId = null;
 let isGenerating = false;
+let trainingEventSource = null;
 
 // Elementos DOM
 const chatMessages = document.getElementById('chatMessages');
@@ -18,6 +19,7 @@ document.addEventListener('DOMContentLoaded', () => {
     loadConversations();
     checkHealth();
     setupEventListeners();
+    connectTrainingProgress(); // Conectar ao SSE de treinamento
 });
 
 function setupEventListeners() {
@@ -431,5 +433,67 @@ function loadConversations() {
     } catch (error) {
         console.error('Error loading conversations:', error);
         conversations = [];
+    }
+}
+
+// Conectar ao SSE de progresso de treinamento
+function connectTrainingProgress() {
+    // Fechar conexão anterior se existir
+    if (trainingEventSource) {
+        trainingEventSource.close();
+    }
+
+    // Criar nova conexão SSE
+    trainingEventSource = new EventSource('/api/training/status');
+
+    trainingEventSource.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        updateTrainingProgress(data);
+    };
+
+    trainingEventSource.onerror = function(error) {
+        console.error('Erro no SSE de treinamento:', error);
+        // Reconectar automaticamente após 5 segundos
+        setTimeout(connectTrainingProgress, 5000);
+    };
+}
+
+// Atualizar UI de progresso de treinamento
+function updateTrainingProgress(data) {
+    const progressPanel = document.getElementById('trainingProgress');
+    
+    if (!data.is_training) {
+        // Esconder painel se não estiver treinando
+        progressPanel.classList.remove('active');
+        return;
+    }
+
+    // Mostrar painel
+    progressPanel.classList.add('active');
+
+    // Atualizar barra de progresso
+    const progress = (data.current_epoch / data.total_epochs) * 100;
+    document.getElementById('progressBar').style.width = progress + '%';
+    document.getElementById('progressPercentage').textContent = Math.round(progress) + '%';
+
+    // Atualizar métricas
+    document.getElementById('metricEpoch').textContent = `${data.current_epoch}/${data.total_epochs}`;
+    document.getElementById('metricLoss').textContent = data.current_loss.toFixed(4);
+    document.getElementById('metricPerplexity').textContent = data.perplexity.toFixed(2);
+    document.getElementById('metricElapsed').textContent = data.elapsed_time;
+    document.getElementById('metricRemaining').textContent = data.estimated_remaining || '-';
+    document.getElementById('metricSpeed').textContent = Math.round(data.samples_per_second);
+
+    // Atualizar título
+    const title = document.getElementById('progressTitle');
+    if (data.current_loss < 3.0) {
+        title.textContent = '🎉 Treinando - Excelente Loss!';
+        title.style.color = 'var(--success)';
+    } else if (data.current_loss < 5.0) {
+        title.textContent = '✨ Treinando - Bom Progresso';
+        title.style.color = 'var(--info)';
+    } else {
+        title.textContent = '🔄 Treinando Modelo...';
+        title.style.color = 'var(--text-primary)';
     }
 }

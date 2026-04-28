@@ -9,6 +9,7 @@ import (
 	"github.com/leandroasilva/lmcs-llm-ia/internal/api"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/config"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/model"
+	"github.com/leandroasilva/lmcs-llm-ia/internal/training"
 )
 
 func RunServe(configPath string) error {
@@ -53,6 +54,11 @@ func RunServe(configPath string) error {
 	mux := http.NewServeMux()
 	handler := api.NewHandler(transformerMdl)
 	handler.RegisterRoutes(mux)
+
+	// Registrar rotas de treinamento
+	trainingHandler := api.NewTrainingHandler(training.GlobalMetrics)
+	mux.HandleFunc("/api/training/status", trainingHandler.HandleTrainingStatus)          // SSE
+	mux.HandleFunc("/api/training/status/json", trainingHandler.HandleTrainingStatusJSON) // JSON
 
 	log.Printf("Servidor rodando em http://%s%s\n", cfg.Server.Host, cfg.Server.Port)
 	log.Println("Frontend: http://localhost" + cfg.Server.Port)
