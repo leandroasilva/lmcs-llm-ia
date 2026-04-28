@@ -4,17 +4,32 @@ Um modelo de linguagem **Transformer** implementado do zero em **Go puro**, trei
 
 ## 🚀 Funcionalidades
 
-- **Arquitetura Transformer Completa**: Multi-head self-attention, positional encoding, feed-forward networks, layer normalization
-- **Beam Search**: Geração de texto com beam search (width=5) para melhor coerência
-- **Regularização Avançada**: Dropout (0.1) e Weight Decay (0.01) para prevenir overfitting
-- **Dataset Enriquecido**: Metadados completos (intent, sentiment, sector) para contexto rico
-- **Tokenização por Palavras**: Vocabulário de 3,600+ palavras para melhor semântica
-- **Contexto Longo**: 256 tokens de contexto para conversas mais coerentes
-- **Interface Moderna**: Chat estilo ChatGPT com design escuro e responsivo
-- **API REST**: Endpoints JSON para integração com outros sistemas
-- **Treinamento Incremental**: Pause, teste e continue de onde parou
-- **CLI Organizada**: Subcomandos separados para download, treino e servir
-- **100% Go**: Sem dependências Python, código Go puro com gonum para matemática
+### Interface Moderna
+- **CSS Grid Layout**: Design responsivo e robusto
+- **Streaming SSE**: Respostas token por token em tempo real ✨
+- **Animações Avançadas**: Gradientes, efeitos de glow, typing indicator
+- **Feedback Visual**: Hover effects, focus rings, transições suaves
+- **Design Escuro**: Tema moderno estilo ChatGPT
+
+### Arquitetura Transformer
+- **Multi-Head Self-Attention**: 8 heads para capturar diferentes aspectos
+- **Positional Encoding**: Codificação posicional senoidal
+- **Beam Search**: Geração com beam search (width=5) para melhor coerência
+- **Regularização**: Dropout (0.1) e Weight Decay (0.01)
+- **Layer Normalization**: Estabilidade no treinamento
+
+### Engenharia de Dados
+- **Dataset Enriquecido**: Metadados (intent, sentiment, sector)
+- **Tokenização por Palavras**: Vocabulário de 3,600+ palavras
+- **Contexto Longo**: 256 tokens para conversas coerentes
+
+### Infraestrutura
+- **Configuração por Ambiente**: 4 presets (dev, staging, prod, test)
+- **18 Variáveis de Ambiente**: Controle total via LMCS_*
+- **Validação Robusta**: 15+ regras de validação automática
+- **Versionamento**: Checkpoints com timestamp e metadata
+- **Subcomandos CLI**: download, train, serve
+- **100% Go**: Sem Python, código puro com gonum
 
 ## 📁 Estrutura do Projeto
 
@@ -233,6 +248,128 @@ source .env
 ### Presets de Ambiente
 
 Cada ambiente tem configurações otimizadas:
+
+| Ambiente | Épocas | D-Model | Layers | Uso |
+|----------|---------|---------|--------|-----|
+| Development | 300 | 512 | 6 | Desenvolvimento local |
+| Staging | 200 | 256 | 4 | Testes intermediários |
+| Production | 500 | 512 | 6 | Modelo final |
+| Test | 10 | 64 | 2 | Testes rápidos |
+
+## 🌐 Streaming SSE em Tempo Real
+
+O LMCS LLM IA suporta **Server-Sent Events (SSE)** para streaming de respostas token por token, proporcionando uma experiência de chat mais fluida e interativa.
+
+### Como Funciona
+
+Em vez de esperar a resposta completa, o servidor envia cada token individualmente conforme é gerado:
+
+```
+Usuário: "Oi, tudo bem?"
+
+Servidor envia:
+data: {"token":"Oi", "done":false}
+data: {"token":",", "done":false}
+data: {"token":" tudo", "done":false}
+data: {"token":" bem", "done":false}
+data: {"token":"?", "done":false}
+data: {"token":"", "done":true, "elapsed_ms":450}
+```
+
+### Endpoints da API
+
+| Endpoint | Método | Descrição |
+|----------|--------|-----------|
+| `/api/ask` | POST | Resposta JSON tradicional (completa) |
+| `/api/ask/stream` | POST | Streaming SSE (token por token) ✨ |
+| `/api/health` | GET | Health check e métricas |
+
+### Exemplo de Uso com cURL
+
+```bash
+# Streaming em tempo real
+curl -N -X POST http://localhost:8080/api/ask/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question":"oi tudo bem","temperature":0.7,"top_k":30}'
+```
+
+### Exemplo com JavaScript (Fetch API)
+
+```javascript
+const response = await fetch('/api/ask/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+        question: 'Oi, tudo bem?',
+        temperature: 0.7,
+        top_k: 30
+    })
+});
+
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+let fullResponse = '';
+
+while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    
+    const text = decoder.decode(value);
+    const lines = text.split('\n');
+    
+    for (const line of lines) {
+        if (line.startsWith('data: ')) {
+            const data = JSON.parse(line.substring(6));
+            
+            if (data.done) {
+                console.log('Completado em', data.elapsed_ms, 'ms');
+            } else {
+                fullResponse += data.token;
+                console.log('Token recebido:', data.token);
+            }
+        }
+    }
+}
+```
+
+### Parâmetros de Streaming
+
+```json
+{
+    "question": "sua pergunta aqui",
+    "temperature": 0.7,      // 0.1-2.0 (criatividade)
+    "top_k": 30              // 1-100 (diversidade)
+}
+```
+
+### Resposta SSE
+
+```json
+// Token intermediário
+{
+    "token": "Olá",
+    "done": false
+}
+
+// Último token
+{
+    "token": "",
+    "done": true,
+    "elapsed_ms": 450
+}
+```
+
+### Testar Streaming
+
+```bash
+# Script de teste
+./test-stream.sh
+
+# Ou manualmente
+curl -N http://localhost:8080/api/ask/stream \
+  -H "Content-Type: application/json" \
+  -d '{"question":"oi","temperature":0.7}'
+```
 
 | Parâmetro | Development | Staging | Production | Test |
 |-----------|-------------|---------|------------|------|

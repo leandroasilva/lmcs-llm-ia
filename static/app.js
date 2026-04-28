@@ -120,7 +120,7 @@ async function sendMessage(event) {
     await generateAIResponse(conversation);
 }
 
-// Gerar resposta da IA
+// Gerar resposta da IA com streaming
 async function generateAIResponse(conversation) {
     isGenerating = true;
     sendBtn.disabled = true;
@@ -129,16 +129,16 @@ async function generateAIResponse(conversation) {
     const loadingId = addLoadingMessage();
     
     try {
-        // Formatar prompt conversacional com histórico
         const userMessage = conversation.messages[conversation.messages.length - 1].content;
-        const prompt = formatConversationPrompt(userMessage, conversation.messages);
-        
-        const length = parseInt(maxLengthInput.value) || 150;
         const temperature = parseFloat(temperatureSlider.value) || 0.7;
         const topK = 40;
         
-        // Chamar API
-        const response = await fetch('/api/ask', {
+        // Remover loading e adicionar mensagem vazia para streaming
+        removeLoadingMessage(loadingId);
+        const aiMessageId = addStreamingMessage();
+        
+        // Usar EventSource para SSE
+        const response = await fetch('/api/ask/stream', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -154,29 +154,58 @@ async function generateAIResponse(conversation) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
         
-        const data = await response.json();
+        // Ler stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullResponse = '';
+        let buffer = '';
         
-        // Verificar se há erro na resposta
-        if (data.error) {
-            throw new Error(data.error);
+        while (true) {
+            const { done, value } = await reader.read();
+            
+            if (done) break;
+            
+            // Decodificar chunk
+            buffer += decoder.decode(value, { stream: true });
+            
+            // Processar eventos SSE
+            const lines = buffer.split('\n');
+            buffer = lines.pop() || ''; // Manter linha incompleta no buffer
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.substring(6));
+                        
+                        if (data.done) {
+                            // Streaming completado
+                            conversation.messages.push({
+                                role: 'ai',
+                                content: fullResponse.trim(),
+                                timestamp: new Date(),
+                                elapsed_ms: data.elapsed_ms
+                            });
+                            updateStreamingMessage(aiMessageId, '', true);
+                            saveConversations();
+                        } else if (data.token) {
+                            // Verificar se é erro
+                            if (data.token.startsWith('[ERRO]')) {
+                                throw new Error(data.token);
+                            }
+                            
+                            // Adicionar token ao texto
+                            fullResponse += data.token;
+                            updateStreamingMessage(aiMessageId, fullResponse);
+                        }
+                    } catch (e) {
+                        console.error('Erro ao parsear SSE:', e);
+                    }
+                }
+            }
         }
-        
-        // Remover loading
-        removeLoadingMessage(loadingId);
-        
-        // Adicionar resposta da IA
-        conversation.messages.push({
-            role: 'ai',
-            content: data.answer || 'Sem resposta',
-            timestamp: new Date()
-        });
-        
-        renderMessages();
-        saveConversations();
         
     } catch (error) {
         console.error('Error generating response:', error);
-        removeLoadingMessage(loadingId);
         addErrorMessage('Erro ao gerar resposta. Verifique se o servidor está rodando.');
     } finally {
         isGenerating = false;
@@ -236,6 +265,34 @@ function addLoadingMessage() {
     chatMessages.appendChild(messageDiv);
     scrollToBottom();
     return id;
+}
+
+// Adicionar mensagem para streaming
+function addStreamingMessage() {
+    const id = 'streaming-' + Date.now();
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message ai';
+    messageDiv.id = id;
+    messageDiv.innerHTML = `
+        <div class="message-avatar">AI</div>
+        <div class="message-content">
+            <span class="streaming-text"></span>
+        </div>
+    `;
+    chatMessages.appendChild(messageDiv);
+    scrollToBottom();
+    return id;
+}
+
+// Atualizar mensagem em streaming
+function updateStreamingMessage(id, text, done = false) {
+    const element = document.getElementById(id);
+    if (element) {
+        const contentDiv = element.querySelector('.message-content');
+        const formattedContent = formatMessage(text);
+        contentDiv.innerHTML = `<span class="${done ? '' : 'streaming-text'}">${formattedContent}</span>`;
+        scrollToBottom();
+    }
 }
 
 // Remover mensagem de loading
