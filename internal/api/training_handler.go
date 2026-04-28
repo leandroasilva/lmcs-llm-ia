@@ -21,6 +21,12 @@ func NewTrainingHandler(metrics *training.TrainingMetrics) *TrainingHandler {
 
 // HandleTrainingStatus endpoint SSE para streaming de métricas
 func (h *TrainingHandler) HandleTrainingStatus(w http.ResponseWriter, r *http.Request) {
+	// Verificar se metrics está inicializado
+	if h.metrics == nil {
+		http.Error(w, "Training metrics not initialized", http.StatusServiceUnavailable)
+		return
+	}
+
 	// Headers SSE
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -45,12 +51,26 @@ func (h *TrainingHandler) HandleTrainingStatus(w http.ResponseWriter, r *http.Re
 	defer ticker.Stop()
 
 	for range ticker.C {
+		// Verificar se a conexão ainda está aberta
+		if r.Context().Err() != nil {
+			return
+		}
+
 		snapshot := h.metrics.GetSnapshot()
 
 		if err := h.sendSSE(w, snapshot); err != nil {
 			return
 		}
-		flusher.Flush()
+
+		// Safe flush com recover para evitar panic
+		func() {
+			defer func() {
+				if recover() != nil {
+					// Ignorar panic no flush (conexão fechada)
+				}
+			}()
+			flusher.Flush()
+		}()
 
 		// Parar se não estiver mais treinando
 		if !snapshot.IsTraining {

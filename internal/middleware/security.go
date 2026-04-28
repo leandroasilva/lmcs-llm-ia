@@ -133,7 +133,11 @@ func Timeout(timeout time.Duration) func(http.Handler) http.Handler {
 			case <-done:
 				return
 			case <-ctx.Done():
-				http.Error(w, "Request timeout", http.StatusGatewayTimeout)
+				// Só escreve se headers ainda não foram enviados
+				// Verifica se o response writer ainda permite escrever
+				if _, err := w.Write(nil); err == nil {
+					http.Error(w, "Request timeout", http.StatusGatewayTimeout)
+				}
 				return
 			}
 		})
