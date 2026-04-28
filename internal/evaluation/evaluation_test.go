@@ -1,14 +1,15 @@
 package evaluation
 
 import (
+	"fmt"
 	"testing"
 )
 
 func TestCrossValidator_Split(t *testing.T) {
-	// Criar dados de teste
+	// Criar dados de teste ÚNICOS (sem duplicatas)
 	data := make([]string, 100)
 	for i := 0; i < 100; i++ {
-		data[i] = string(rune('A' + i%26))
+		data[i] = fmt.Sprintf("sample_%03d", i)
 	}
 
 	cv := NewCrossValidator(data, 5)

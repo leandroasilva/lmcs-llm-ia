@@ -56,10 +56,8 @@ func (t *BPETokenizer) Train(corpus string, vocabSize int) {
 
 	// Extrair todos os caracteres únicos
 	for word := range wordFreq {
-		for _, char := range strings.Split(word, "") {
-			if char == "" {
-				continue
-			}
+		for i := 0; i < len(word); i++ {
+			char := word[i : i+1]
 			if _, exists := vocab[char]; !exists {
 				vocab[char] = nextID
 				nextID++
@@ -71,18 +69,19 @@ func (t *BPETokenizer) Train(corpus string, vocabSize int) {
 
 	// Aprender merges BPE
 	merges := make([]Merge, 0)
+	maxIterations := vocabSize * 10 // Limite de segurança
+	iterations := 0
 
-	for len(vocab) < vocabSize {
+	for len(vocab) < vocabSize && iterations < maxIterations {
+		iterations++
+
 		// Contar pares adjacentes
 		pairCounts := make(map[[2]string]int)
 
 		for word, freq := range wordFreq {
-			symbols := strings.Split(word, "")
-			for i := 0; i < len(symbols)-1; i++ {
-				if symbols[i] == "" || symbols[i+1] == "" {
-					continue
-				}
-				pair := [2]string{symbols[i], symbols[i+1]}
+			// Evitar split desnecessário - iterar por índices
+			for i := 0; i < len(word)-1; i++ {
+				pair := [2]string{word[i : i+1], word[i+1 : i+2]}
 				pairCounts[pair] += freq
 			}
 		}
@@ -120,22 +119,27 @@ func (t *BPETokenizer) Train(corpus string, vocabSize int) {
 		// Aplicar merge em todas as palavras
 		newWordFreq := make(map[string]int)
 		for word, freq := range wordFreq {
-			symbols := strings.Split(word, "")
-			newSymbols := make([]string, 0)
+			// Aplicar merge sem split - usar strings.Replace
+			// Mas precisamos aplicar apenas em pares adjacentes, não em todas ocorrências
+			// Então vamos fazer manualmente
+			var newWord strings.Builder
+			newWord.Grow(len(word))
 
 			i := 0
-			for i < len(symbols) {
-				if i < len(symbols)-1 && symbols[i] == bestPair[0] && symbols[i+1] == bestPair[1] {
-					newSymbols = append(newSymbols, newToken)
+			for i < len(word) {
+				// Verificar se temos o par
+				if i+1 < len(word) &&
+					word[i:i+1] == bestPair[0] &&
+					word[i+1:i+2] == bestPair[1] {
+					newWord.WriteString(newToken)
 					i += 2
 				} else {
-					newSymbols = append(newSymbols, symbols[i])
+					newWord.WriteString(word[i : i+1])
 					i++
 				}
 			}
 
-			newWord := strings.Join(newSymbols, "")
-			newWordFreq[newWord] += freq
+			newWordFreq[newWord.String()] += freq
 		}
 		wordFreq = newWordFreq
 	}
