@@ -58,11 +58,15 @@ type TransformerLayer struct {
 	WQ, WK, WV *mat.Dense // [d_model, d_model]
 	WO         *mat.Dense // [d_model, d_model]
 
-	// Feed-forward
-	W1 *mat.Dense // [ff_hidden, d_model]
+	// Feed-forward (denso ou MoE)
+	W1 *mat.Dense // [ff_hidden, d_model] - FFN denso
 	B1 *mat.Dense // [ff_hidden, 1]
 	W2 *mat.Dense // [d_model, ff_hidden]
 	B2 *mat.Dense // [d_model, 1]
+
+	// MoE (opcional, substitui FFN denso se não nil)
+	MoELayer *MoELayer // Mixture of Experts
+	UseMoE   bool      // Flag para usar MoE ao invés de FFN denso
 
 	// Layer normalization
 	LN1Weight, LN1Bias *mat.Dense // [d_model, 1]
@@ -164,6 +168,26 @@ func NewTransformerModel(vocabSize, dModel, nHeads, nLayers, maxSeqLen, ffHidden
 	}
 
 	return model
+}
+
+// EnableMoEForLayer habilita MoE para uma camada específica
+func (model *TransformerModel) EnableMoEForLayer(layerIdx int, moeConfig *MoEConfig) {
+	if layerIdx < 0 || layerIdx >= len(model.TransformerLayers) {
+		return
+	}
+
+	layer := &model.TransformerLayers[layerIdx]
+	layer.MoELayer = NewMoELayer(moeConfig)
+	layer.UseMoE = true
+}
+
+// EnableMoEForAllLayers habilita MoE para todas as camadas
+func (model *TransformerModel) EnableMoEForAllLayers(numExperts, topK int) {
+	moeConfig := NewMoEConfig(model.DModel, numExperts, topK, model.FFHidden)
+
+	for i := range model.TransformerLayers {
+		model.EnableMoEForLayer(i, moeConfig)
+	}
 }
 
 // BuildVocabTransformer constrói vocabulário word-level a partir do texto
@@ -857,8 +881,23 @@ func multiHeadAttention(layer *TransformerLayer, X *mat.Dense, seqLen, dModel, n
 	return result
 }
 
-// feedForward implementa FFN
+// feedForward implementa FFN (denso ou MoE)
 func feedForward(layer *TransformerLayer, X *mat.Dense, seqLen, dModel int) *mat.Dense {
+	// Se MoE está habilitado, usar MoE ao invés de FFN denso
+	if layer.UseMoE && layer.MoELayer != nil {
+		output, _ := MixtureOfExperts(layer.MoELayer, X, seqLen)
+
+		// Residual connection
+		for i := 0; i < seqLen; i++ {
+			for j := 0; j < dModel; j++ {
+				output.Set(i, j, output.At(i, j)+X.At(i, j))
+			}
+		}
+
+		return output
+	}
+
+	// FFN denso (implementação original)
 	// X * W1^T + B1
 	hidden := mat.NewDense(seqLen, layer.W1.RawMatrix().Rows, nil)
 	hidden.Mul(X, layer.W1.T())
