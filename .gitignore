@@ -90,6 +90,7 @@ debug.test
 
 # Config files Train
 config.trained.json
+training_gpu/data/*
 
 #frontend
 .npm-cache
