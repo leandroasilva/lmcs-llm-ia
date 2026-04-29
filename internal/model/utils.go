@@ -105,6 +105,45 @@ func SampleTopK(probs []float64, k int) int {
 	return topK[len(topK)-1].idx
 }
 
+// ApplyRepetitionPenalty aplica penalidade de repetição aos logits
+// Penaliza tokens que já aparecem no contexto gerado
+// penalty > 1.0 reduz probabilidade de tokens repetidos
+// penalty = 1.0 não aplica penalidade
+// penalty < 1.0 incentiva repetição (raramente usado)
+func ApplyRepetitionPenalty(logits []float64, generatedTokens []int, penalty float64) []float64 {
+	if penalty <= 1.0 || len(generatedTokens) == 0 {
+		return logits
+	}
+
+	// Contar frequência de cada token no contexto gerado
+	tokenCounts := make(map[int]int)
+	for _, token := range generatedTokens {
+		tokenCounts[token]++
+	}
+
+	// Aplicar penalidade aos logits
+	penalized := make([]float64, len(logits))
+	copy(penalized, logits)
+
+	for tokenID, count := range tokenCounts {
+		if tokenID >= 0 && tokenID < len(penalized) {
+			// Penalidade proporcional ao número de ocorrências
+			// penalty ^ count torna tokens muito repetidos menos prováveis
+			penaltyFactor := math.Pow(penalty, float64(count))
+
+			// Para logits positivos: dividir por penalty (reduz probabilidade)
+			// Para logits negativos: multiplicar por penalty (mantém negativo)
+			if penalized[tokenID] > 0 {
+				penalized[tokenID] /= penaltyFactor
+			} else {
+				penalized[tokenID] *= penaltyFactor
+			}
+		}
+	}
+
+	return penalized
+}
+
 // Generator helper para construção eficiente de strings
 type Generator struct {
 	strings.Builder

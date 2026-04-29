@@ -322,6 +322,9 @@ func (m *TransformerModel) GenerateWithKVCache(prompt string, maxTokens int, tem
 	currentTokens := make([]int, len(promptTokens))
 	copy(currentTokens, promptTokens)
 
+	// Penalidade de repetição (1.2 = moderada, 1.5 = forte)
+	repetitionPenalty := 1.3
+
 	for i := 0; i < maxTokens; i++ {
 		var lastHidden []float64
 
@@ -347,6 +350,9 @@ func (m *TransformerModel) GenerateWithKVCache(prompt string, maxTokens int, tem
 				logits[v] += m.WOut.At(v, j) * lastHidden[j]
 			}
 		}
+
+		// Aplicar penalidade de repetição aos logits
+		logits = ApplyRepetitionPenalty(logits, generatedTokens, repetitionPenalty)
 
 		// Aplicar temperatura
 		if temperature > 0 && temperature != 1.0 {
