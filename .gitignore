@@ -87,3 +87,6 @@ debug.test
 *.bak
 *.backup
 *.old
+
+# Config files Train
+config.trained.json
