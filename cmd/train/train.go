@@ -1,6 +1,7 @@
 package train
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"time"
@@ -11,7 +12,7 @@ import (
 	"github.com/leandroasilva/lmcs-llm-ia/internal/training"
 )
 
-func RunTrain(configPath string) error {
+func RunTrain(configPath string, useGPU bool) error {
 	// Carregar configurações
 	cfg := config.DefaultConfig()
 
@@ -88,6 +89,26 @@ func RunTrain(configPath string) error {
 			"heads", cfg.Training.NHeads,
 			"layers", cfg.Training.NumLayers)
 	}
+
+	// Initialize compute backend (CPU or GPU)
+	if useGPU {
+		logger.Info("Initializing GPU backend")
+	} else {
+		logger.Info("Initializing CPU backend")
+	}
+	if err := transformerMdl.InitBackend(useGPU); err != nil {
+		logger.Warn("Failed to initialize requested backend, falling back to CPU", "error", err)
+		if err := transformerMdl.InitBackend(false); err != nil {
+			return fmt.Errorf("failed to initialize any backend: %w", err)
+		}
+	}
+	defer transformerMdl.ReleaseBackend()
+
+	info := transformerMdl.BackendInfo()
+	logger.Info("Compute backend ready",
+		"device", info.Name,
+		"type", info.Type,
+		"vendor", info.Vendor)
 
 	// Iniciar métricas de treinamento
 	training.GlobalMetrics.StartTraining(cfg.Training.Epochs)

@@ -2,12 +2,14 @@ package model
 
 import (
 	"encoding/gob"
+	"fmt"
 	"math"
 	"math/rand"
 	"os"
 	"strings"
 	"sync"
 
+	"github.com/leandroasilva/lmcs-llm-ia/internal/compute"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/tokenizer"
 	"gonum.org/v1/gonum/mat"
 )
@@ -24,6 +26,10 @@ type TransformerModel struct {
 	EpochsTrained int
 	DropoutRate   float64 // Taxa de dropout para regularização
 	WeightDecay   float64 // Weight decay (L2 regularization)
+
+	// Compute backend (CPU or GPU)
+	Backend compute.Backend
+	UseGPU  bool
 
 	// Embeddings
 	TokenEmbedding        *mat.Dense // [vocab_size, d_model]
@@ -172,6 +178,44 @@ func NewTransformerModel(vocabSize, dModel, nHeads, nLayers, maxSeqLen, ffHidden
 	}
 
 	return model
+}
+
+// InitBackend initializes the compute backend (CPU or GPU)
+func (model *TransformerModel) InitBackend(useGPU bool) error {
+	if model.Backend != nil {
+		model.Backend.Release()
+	}
+
+	backend, err := compute.NewBackend(useGPU)
+	if err != nil {
+		return fmt.Errorf("failed to initialize backend: %w", err)
+	}
+
+	model.Backend = backend
+	model.UseGPU = useGPU
+
+	return nil
+}
+
+// InitBackendAuto automatically selects the best available backend
+func (model *TransformerModel) InitBackendAuto() error {
+	return model.InitBackend(true) // Try GPU first, fallback to CPU
+}
+
+// ReleaseBackend releases the compute backend
+func (model *TransformerModel) ReleaseBackend() {
+	if model.Backend != nil {
+		model.Backend.Release()
+		model.Backend = nil
+	}
+}
+
+// BackendInfo returns information about the current compute backend
+func (model *TransformerModel) BackendInfo() compute.DeviceInfo {
+	if model.Backend == nil {
+		return compute.DeviceInfo{Type: compute.DeviceCPU, Name: "Not initialized"}
+	}
+	return model.Backend.Info()
 }
 
 // EnableMoEForLayer habilita MoE para uma camada específica
