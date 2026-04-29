@@ -28,6 +28,13 @@ func (w *responseWriterWrapper) Written() bool {
 	return w.written
 }
 
+// Flush implements http.Flusher to support SSE streaming
+func (w *responseWriterWrapper) Flush() {
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
 // RateLimiter implementa token bucket rate limiting
 type RateLimiter struct {
 	tokens     map[string]int

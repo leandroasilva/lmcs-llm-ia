@@ -98,6 +98,12 @@ func LoadFromFile(path string) (*Config, error) {
 		return nil, fmt.Errorf("erro ao parsear JSON: %w", err)
 	}
 
+	// Sanity check: if DModel is zero, the file didn't contain a valid config structure
+	// (e.g., it might be a model export JSON instead of a config file)
+	if cfg.Training.DModel == 0 {
+		return nil, fmt.Errorf("arquivo não contém uma configuração válida (d_model=0)")
+	}
+
 	// Aplicar variáveis de ambiente (sobrescrevem o arquivo)
 	cfg.applyEnvironmentVariables()
 
