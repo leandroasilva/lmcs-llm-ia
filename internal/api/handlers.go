@@ -126,8 +126,8 @@ func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
 	// Formatar como conversação para o modelo
 	conversationalPrompt := fmt.Sprintf("Usuário: %s\nAssistente: ", req.Question)
 
-	// Gerar resposta
-	fullResponse := h.model.Generate(conversationalPrompt, 150, req.Temperature, req.TopK)
+	// Gerar resposta usando KV cache para speedup
+	fullResponse := h.model.GenerateWithKVCache(conversationalPrompt, 150, req.Temperature, req.TopK)
 
 	// Extrair apenas a resposta do assistente
 	answer := extractAssistantResponse(fullResponse)

@@ -214,3 +214,65 @@ func extractJSONSubMatrix(target *mat.Dense, source *mat.Dense, bias []float64, 
 		}
 	}
 }
+
+// loadVocabularyForModel carrega vocabulário do arquivo JSON
+func loadVocabularyForModel(m *TransformerModel) error {
+	// Tentar carregar do arquivo de vocabulário
+	vocabPath := "training_gpu/vocab_trained.json"
+
+	data, err := os.ReadFile(vocabPath)
+	if err != nil {
+		return fmt.Errorf("não foi possível ler vocabulário: %w", err)
+	}
+
+	var vocabData struct {
+		VocabSize int            `json:"vocab_size"`
+		WordToID  map[string]int `json:"word_to_id"`
+	}
+
+	if err := json.Unmarshal(data, &vocabData); err != nil {
+		return fmt.Errorf("erro ao parsear vocabulário: %w", err)
+	}
+
+	// Popular modelo com vocabulário
+	m.WordToID = vocabData.WordToID
+	m.IDToWord = make(map[int]string)
+	m.Vocab = make([]string, len(vocabData.WordToID))
+
+	for word, id := range vocabData.WordToID {
+		m.IDToWord[id] = word
+		if id < len(m.Vocab) {
+			m.Vocab[id] = word
+		}
+	}
+
+	// Configurar tokens especiais
+	m.SpecialTokens = map[string]int{
+		"<PAD>": 0,
+		"<UNK>": 1,
+		"<BOS>": 2,
+		"<EOS>": 3,
+	}
+
+	return nil
+}
+
+// populatePlaceholderVocab cria vocabulário placeholder
+func populatePlaceholderVocab(m *TransformerModel, vocabSize int) {
+	m.Vocab = make([]string, vocabSize)
+	m.WordToID = make(map[string]int)
+	m.IDToWord = make(map[int]string)
+
+	for i := 0; i < vocabSize; i++ {
+		m.Vocab[i] = fmt.Sprintf("token_%d", i)
+		m.WordToID[m.Vocab[i]] = i
+		m.IDToWord[i] = m.Vocab[i]
+	}
+
+	m.SpecialTokens = map[string]int{
+		"<PAD>": 0,
+		"<UNK>": 1,
+		"<BOS>": 2,
+		"<EOS>": 3,
+	}
+}
