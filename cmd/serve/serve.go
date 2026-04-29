@@ -1,10 +1,12 @@
 package serve
 
 import (
+	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/leandroasilva/lmcs-llm-ia/internal/api"
@@ -41,11 +43,21 @@ func RunServe(configPath string) error {
 
 	// Carregar modelo
 	if _, err := os.Stat(cfg.Paths.ModelPath); err != nil {
-		return nil
+		return fmt.Errorf("modelo não encontrado em %s: %w", cfg.Paths.ModelPath, err)
 	}
 
 	log.Printf("Carregando modelo de %s...\n", cfg.Paths.ModelPath)
-	transformerMdl, err := model.LoadTransformerModel(cfg.Paths.ModelPath)
+
+	var transformerMdl *model.TransformerModel
+	var err error
+
+	// Verificar se é JSON exportado ou binário Go
+	if strings.HasSuffix(cfg.Paths.ModelPath, ".json") {
+		transformerMdl, err = model.LoadTrainedModelFromJSON(cfg.Paths.ModelPath)
+	} else {
+		transformerMdl, err = model.LoadTransformerModel(cfg.Paths.ModelPath)
+	}
+
 	if err != nil {
 		return err
 	}

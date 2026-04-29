@@ -583,6 +583,12 @@ func LoadTransformerModel(path string) (*TransformerModel, error) {
 	return &model, nil
 }
 
+// LoadTrainedModelFromJSON carrega modelo treinado exportado em JSON
+func LoadTrainedModelFromJSON(path string) (*TransformerModel, error) {
+	// Implementation will be added in a separate file to avoid complexity
+	return loadTrainedModelFromJSON(path)
+}
+
 // initGradientsIfMissing inicializa gradientes para modelos antigos
 func (m *TransformerModel) initGradientsIfMissing() {
 	// Inicializar gradientes do modelo
