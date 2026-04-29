@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Checkpoints (opcional - descomente se não quiser commitar)
+# checkpoints/*.pt
+# checkpoints/*.bin
+# checkpoints/*.pth
+
+# Logs
+logs/
+*.log
+*.jsonl
+
+# TensorBoard
+runs/
+events.out.tfevents.*
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
