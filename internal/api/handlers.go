@@ -61,16 +61,9 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/ask/stream", h.handleAskStream) // Streaming SSE
 	mux.HandleFunc("/api/health", h.handleHealth)
 
-	// Arquivos estáticos
+	// Arquivos estáticos legados (fallback se frontend/dist não existir)
 	fs := http.FileServer(http.Dir("static"))
 	mux.Handle("/static/", http.StripPrefix("/static/", fs))
-
-	// Redirecionar raiz para o frontend
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/" {
-			http.ServeFile(w, r, "static/index.html")
-		}
-	})
 }
 
 // handleAsk handler para geração de texto

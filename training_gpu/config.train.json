@@ -15,15 +15,15 @@
     "learning_rate": 1e-4,
     "weight_decay": 0.01,
     "gradient_clip": 1.0,
-    "data_path": "../dataset/data/train_enriched.txt"
+    "data_path": "data/merged_train.txt"
   },
   "checkpoint": {
-    "save_path": "./checkpoints/model.pt",
+    "save_path": "./checkpoints/model.weights.h5",
     "resume": null,
     "save_interval": 10
   },
   "export": {
-    "export_go": null,
+    "export_go": true,
     "output_path": "../config.trained.json"
   }
 }

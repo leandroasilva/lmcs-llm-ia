@@ -1,12 +1,11 @@
+#!/usr/bin/env python3
 """
-GPU Training for LMCS LLM - AMD GPU Support via PyTorch
-========================================================
-
-This module provides GPU-accelerated training for the LMCS Transformer model.
-It supports:
-- Apple Silicon (M1/M2/M3) via MPS (Metal Performance Shaders)
-- AMD GPUs on Linux via ROCm
-- CPU fallback for any platform
+GPU Training for LMCS LLM - TensorFlow/Keras Version
+=====================================================
+Supports:
+- Apple Silicon (M1/M2/M3) via Metal (mps)
+- NVIDIA GPUs via CUDA
+- CPU fallback
 
 Usage:
     python train_gpu.py --device auto --epochs 300 --batch-size 16
@@ -20,21 +19,21 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-import torch
-import torch.nn as nn
-from torch.utils.data import Dataset, DataLoader
-from tqdm import tqdm
+import tensorflow as tf
+from tensorflow import keras
+from tensorflow.keras import layers
 
-# Add src to path
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+# Enable mixed precision for faster training on compatible GPUs
+policy = tf.keras.mixed_precision.Policy('mixed_float16')
+tf.keras.mixed_precision.set_global_policy(policy)
 
 
 class TransformerConfig:
-    """Configuration for Transformer model"""
-    
+    """Configuration for Transformer model."""
+
     def __init__(
         self,
         vocab_size: int = 8000,
@@ -52,306 +51,317 @@ class TransformerConfig:
         self.max_seq_len = max_seq_len
         self.ff_hidden = ff_hidden
         self.dropout = dropout
-    
+
     def to_dict(self) -> Dict:
         return self.__dict__
-    
+
     @classmethod
     def from_dict(cls, config_dict: Dict) -> 'TransformerConfig':
         return cls(**config_dict)
 
 
-class TransformerModel(nn.Module):
-    """Transformer Language Model compatible with Go implementation"""
-    
-    def __init__(self, config: TransformerConfig):
-        super().__init__()
-        self.config = config
-        
-        # Embeddings
-        self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
-        self.position_embedding = nn.Embedding(config.max_seq_len, config.d_model)
-        self.dropout = nn.Dropout(config.dropout)
-        
-        # Transformer encoder layers
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=config.d_model,
-            nhead=config.n_heads,
-            dim_feedforward=config.ff_hidden,
+def positional_encoding(max_seq_len: int, d_model: int) -> tf.Tensor:
+    """Create sinusoidal positional encodings."""
+    positions = np.arange(max_seq_len)[:, np.newaxis]
+    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
+
+    pe = np.zeros((max_seq_len, d_model))
+    pe[:, 0::2] = np.sin(positions * div_term)
+    pe[:, 1::2] = np.cos(positions * div_term)
+
+    return tf.constant(pe, dtype=tf.float32)
+
+
+def create_transformer_model(config: TransformerConfig) -> keras.Model:
+    """Create a Transformer language model using Keras Functional API."""
+
+    inputs = layers.Input(shape=(config.max_seq_len,), dtype=tf.int32, name="input_ids")
+
+    # Token embeddings + positional encoding
+    token_embed = layers.Embedding(config.vocab_size, config.d_model, name="token_embedding")
+    x = token_embed(inputs)
+
+    pos_enc = positional_encoding(config.max_seq_len, config.d_model)
+    x = x + pos_enc
+    x = layers.Dropout(config.dropout)(x)
+
+    # Transformer encoder layers
+    for i in range(config.n_layers):
+        # Multi-head self-attention
+        attn_output = layers.MultiHeadAttention(
+            num_heads=config.n_heads,
+            key_dim=config.d_model // config.n_heads,
             dropout=config.dropout,
-            batch_first=True,
-            activation='gelu'
-        )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=config.n_layers)
-        
-        # Final layer norm
-        self.layer_norm = nn.LayerNorm(config.d_model)
-        
-        # Output projection
-        self.output_projection = nn.Linear(config.d_model, config.vocab_size)
-        
-        # Initialize weights
-        self._init_weights()
-    
-    def _init_weights(self):
-        """Initialize weights with Xavier uniform"""
-        for p in self.parameters():
-            if p.dim() > 1:
-                nn.init.xavier_uniform_(p)
-    
-    def forward(
-        self,
-        input_ids: torch.Tensor,
-        attention_mask: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        batch_size, seq_len = input_ids.shape
-        
-        # Token + positional embeddings
-        token_embeds = self.token_embedding(input_ids)
-        position_ids = torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand(batch_size, -1)
-        position_embeds = self.position_embedding(position_ids)
-        
-        # Combine embeddings
-        x = self.dropout(token_embeds + position_embeds)
-        
-        # Create causal mask (autoregressive)
-        causal_mask = torch.triu(
-            torch.ones(seq_len, seq_len, device=input_ids.device) * float('-inf'),
-            diagonal=1
-        )
-        
-        # Transformer encoder
-        if attention_mask is not None:
-            # Convert attention mask from 0/1 to 0/-inf
-            attention_mask = attention_mask.unsqueeze(1).unsqueeze(2)
-            attention_mask = attention_mask.masked_fill(attention_mask == 0, float('-inf'))
-            combined_mask = attention_mask + causal_mask
-        else:
-            combined_mask = causal_mask
-        
-        # Forward through transformer
-        hidden = self.transformer(x, mask=combined_mask)
-        
-        # Final layer norm
-        hidden = self.layer_norm(hidden)
-        
-        # Output projection
-        logits = self.output_projection(hidden)
-        
-        return logits
+            name=f"transformer_layer_{i}_mha"
+        )(x, x, use_causal_mask=True)
+
+        # Layer norm + residual
+        x = layers.LayerNormalization(epsilon=1e-6, name=f"transformer_layer_{i}_ln1")(x + attn_output)
+
+        # Feed-forward network
+        ff_output = layers.Dense(config.ff_hidden, activation='gelu', name=f"transformer_layer_{i}_ff1")(x)
+        ff_output = layers.Dropout(config.dropout)(ff_output)
+        ff_output = layers.Dense(config.d_model, name=f"transformer_layer_{i}_ff2")(ff_output)
+
+        # Layer norm + residual
+        x = layers.LayerNormalization(epsilon=1e-6, name=f"transformer_layer_{i}_ln2")(x + ff_output)
+
+    # Final layer norm
+    x = layers.LayerNormalization(epsilon=1e-6, name="final_layer_norm")(x)
+
+    # Output projection (tied with token embedding)
+    logits = layers.Dense(config.vocab_size, use_bias=False, name="output_projection")(x)
+
+    model = keras.Model(inputs=inputs, outputs=logits, name="lmcs_transformer")
+
+    # Tie weights: output projection = token embedding transpose
+    model.get_layer("output_projection").set_weights([
+        model.get_layer("token_embedding").get_weights()[0].T
+    ])
+
+    return model
 
 
-class TextDataset(Dataset):
-    """Dataset for training on text sequences"""
-    
-    def __init__(self, text: str, max_seq_len: int = 256, stride: int = 128):
-        self.tokens = text.split()
+class TextDataset:
+    """Dataset for training on text sequences."""
+
+    def __init__(self, text: str, word_to_id: Dict[str, int], max_seq_len: int = 256, stride: int = 128):
+        self.word_to_id = word_to_id
         self.max_seq_len = max_seq_len
         self.stride = stride
-        
+        self.unk_id = word_to_id.get("<UNK>", 1)
+        self.bos_id = word_to_id.get("<BOS>", 2)
+        self.eos_id = word_to_id.get("<EOS>", 3)
+        self.pad_id = word_to_id.get("<PAD>", 0)
+
+        # Tokenize text
+        words = text.lower().split()
+        self.tokens = []
+        for word in words:
+            word = word.strip(".,!?;:\"'()[]{}")
+            if word:
+                self.tokens.append(word_to_id.get(word, self.unk_id))
+
         # Create sequences
         self.sequences = []
         for i in range(0, len(self.tokens) - max_seq_len, stride):
-            self.sequences.append(self.tokens[i:i + max_seq_len])
-        
+            self.sequences.append(self.tokens[i:i + max_seq_len + 1])
+
         print(f"Created {len(self.sequences)} sequences from {len(self.tokens)} tokens")
-    
+
     def __len__(self):
         return len(self.sequences)
-    
+
     def __getitem__(self, idx):
-        sequence = self.sequences[idx]
-        # Return input and target (shifted by 1)
-        return torch.tensor([hash(token) % 8000 for token in sequence[:-1]], dtype=torch.long), \
-               torch.tensor([hash(token) % 8000 for token in sequence[1:]], dtype=torch.long)
+        seq = self.sequences[idx]
+        input_ids = seq[:-1]
+        target_ids = seq[1:]
+        # Pad if necessary
+        while len(input_ids) < self.max_seq_len:
+            input_ids.append(self.pad_id)
+            target_ids.append(self.pad_id)
+        return np.array(input_ids, dtype=np.int32), np.array(target_ids, dtype=np.int32)
 
 
-class Trainer:
-    """Training loop with GPU support"""
-    
-    def __init__(
-        self,
-        model: TransformerModel,
-        device: torch.device,
-        learning_rate: float = 1e-4,
-        weight_decay: float = 0.01,
-        gradient_clip: float = 1.0,
-    ):
-        self.model = model
-        self.device = device
-        self.learning_rate = learning_rate
-        self.gradient_clip = gradient_clip
-        
-        # Move model to device
-        self.model.to(device)
-        
-        # Optimizer
-        self.optimizer = torch.optim.AdamW(
-            model.parameters(),
-            lr=learning_rate,
-            weight_decay=weight_decay,
-            betas=(0.9, 0.95)
+def create_tf_dataset(dataset: TextDataset, batch_size: int, shuffle: bool = True):
+    """Create a tf.data.Dataset from TextDataset."""
+    def generator():
+        indices = list(range(len(dataset)))
+        if shuffle:
+            np.random.shuffle(indices)
+        for idx in indices:
+            yield dataset[idx]
+
+    tf_ds = tf.data.Dataset.from_generator(
+        generator,
+        output_signature=(
+            tf.TensorSpec(shape=(dataset.max_seq_len,), dtype=tf.int32),
+            tf.TensorSpec(shape=(dataset.max_seq_len,), dtype=tf.int32)
         )
-        
-        # Loss function
-        self.criterion = nn.CrossEntropyLoss()
-        
-        # Training stats
-        self.epoch = 0
-        self.global_step = 0
-        self.best_loss = float('inf')
-    
-    def train_epoch(self, dataloader: DataLoader, log_interval: int = 10) -> float:
-        """Train for one epoch"""
-        self.model.train()
-        total_loss = 0
-        num_batches = 0
-        
-        pbar = tqdm(dataloader, desc=f"Epoch {self.epoch}")
-        for batch_idx, (input_ids, targets) in enumerate(pbar):
-            # Move to device
-            input_ids = input_ids.to(self.device)
-            targets = targets.to(self.device)
-            
-            # Forward pass
-            logits = self.model(input_ids)
-            
-            # Compute loss
-            # Reshape for CrossEntropyLoss: (batch*seq, vocab)
-            loss = self.criterion(
-                logits.view(-1, logits.size(-1)),
-                targets.view(-1)
-            )
-            
-            # Backward pass
-            self.optimizer.zero_grad()
-            loss.backward()
-            
-            # Gradient clipping
-            if self.gradient_clip > 0:
-                torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.gradient_clip)
-            
-            # Optimizer step
-            self.optimizer.step()
-            
-            # Stats
-            total_loss += loss.item()
-            num_batches += 1
-            self.global_step += 1
-            
-            # Update progress bar
-            if batch_idx % log_interval == 0:
-                avg_loss = total_loss / num_batches
-                pbar.set_postfix({'loss': f'{avg_loss:.4f}', 'lr': f'{self.learning_rate:.6f}'})
-        
-        return total_loss / num_batches
-    
-    @torch.no_grad()
-    def evaluate(self, dataloader: DataLoader) -> float:
-        """Evaluate model"""
-        self.model.eval()
-        total_loss = 0
-        num_batches = 0
-        
-        for input_ids, targets in tqdm(dataloader, desc="Evaluating"):
-            input_ids = input_ids.to(self.device)
-            targets = targets.to(self.device)
-            
-            logits = self.model(input_ids)
-            loss = self.criterion(logits.view(-1, logits.size(-1)), targets.view(-1))
-            
-            total_loss += loss.item()
-            num_batches += 1
-        
-        return total_loss / num_batches
-    
-    def save_checkpoint(self, path: str, is_best: bool = False):
-        """Save model checkpoint"""
-        checkpoint = {
-            'epoch': self.epoch,
-            'model_state_dict': self.model.state_dict(),
-            'optimizer_state_dict': self.optimizer.state_dict(),
-            'learning_rate': self.learning_rate,
-            'config': self.model.config.to_dict(),
-            'global_step': self.global_step,
-        }
-        
-        # Save current checkpoint
-        torch.save(checkpoint, path)
-        
-        # Save best checkpoint
-        if is_best:
-            best_path = path.replace('.pt', '_best.pt')
-            torch.save(checkpoint, best_path)
-            print(f"✓ Best model saved to {best_path}")
-    
-    def load_checkpoint(self, path: str):
-        """Load model checkpoint"""
-        if not os.path.exists(path):
-            raise FileNotFoundError(f"Checkpoint not found: {path}")
-        
-        checkpoint = torch.load(path, map_location=self.device)
-        self.model.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.epoch = checkpoint['epoch']
-        self.global_step = checkpoint.get('global_step', 0)
-        self.learning_rate = checkpoint.get('learning_rate', self.learning_rate)
-        
-        print(f"✓ Loaded checkpoint from epoch {self.epoch}")
+    )
+
+    tf_ds = tf_ds.batch(batch_size)
+    tf_ds = tf_ds.prefetch(tf.data.AUTOTUNE)
+    return tf_ds
 
 
-def get_device(device_str: str = "auto") -> torch.device:
-    """Get the best available device"""
-    if device_str == "auto":
-        # Try MPS (Apple Silicon) first
-        if torch.backends.mps.is_available():
-            print("✓ Using Apple Silicon GPU (MPS)")
-            return torch.device("mps")
-        
-        # Try CUDA (NVIDIA)
-        if torch.cuda.is_available():
-            print(f"✓ Using NVIDIA GPU: {torch.cuda.get_device_name(0)}")
-            return torch.device("cuda")
-        
-        # Fallback to CPU
-        print("✓ Using CPU")
-        return torch.device("cpu")
-    
-    return torch.device(device_str)
+def extract_vocabulary(text: str, vocab_size: int = 8000) -> Dict[str, int]:
+    """Extract word-level vocabulary from text."""
+    words = text.lower().split()
+    cleaned = []
+    for word in words:
+        word = word.strip(".,!?;:\"'()[]{}")
+        if len(word) > 0:
+            cleaned.append(word)
 
+    # Count frequency
+    word_freq = {}
+    for word in cleaned:
+        word_freq[word] = word_freq.get(word, 0) + 1
 
-def export_for_go(checkpoint_path: str, output_path: str):
-    """Export PyTorch model to Go-compatible format"""
-    print(f"Loading checkpoint from {checkpoint_path}")
-    checkpoint = torch.load(checkpoint_path, map_location='cpu')
-    
-    config = checkpoint['config']
-    state_dict = checkpoint['model_state_dict']
-    
-    # Convert to numpy
-    export_data = {
-        'config': config,
-        'weights': {
-            k: v.cpu().numpy().tolist()
-            for k, v in state_dict.items()
-        }
+    sorted_words = sorted(word_freq.items(), key=lambda x: x[1], reverse=True)
+
+    if len(sorted_words) > vocab_size - 4:
+        sorted_words = sorted_words[:vocab_size - 4]
+
+    word_to_id = {
+        "<PAD>": 0,
+        "<UNK>": 1,
+        "<BOS>": 2,
+        "<EOS>": 3,
     }
-    
-    # Save as JSON
-    with open(output_path, 'w') as f:
+    id_to_word = {
+        0: "<PAD>",
+        1: "<UNK>",
+        2: "<BOS>",
+        3: "<EOS>",
+    }
+
+    for i, (word, _) in enumerate(sorted_words):
+        token_id = i + 4
+        word_to_id[word] = token_id
+        id_to_word[token_id] = word
+
+    return word_to_id, id_to_word
+
+
+def masked_sparse_categorical_crossentropy(y_true, y_pred):
+    """Custom loss that ignores PAD tokens."""
+    pad_id = 0
+    mask = tf.cast(tf.not_equal(y_true, pad_id), tf.float32)
+    loss = tf.keras.losses.sparse_categorical_crossentropy(y_true, y_pred, from_logits=True)
+    loss = loss * mask
+    return tf.reduce_sum(loss) / tf.reduce_sum(mask)
+
+
+def masked_accuracy(y_true, y_pred):
+    """Custom accuracy that ignores PAD tokens."""
+    pad_id = 0
+    mask = tf.cast(tf.not_equal(y_true, pad_id), tf.float32)
+    predictions = tf.argmax(y_pred, axis=-1, output_type=tf.int32)
+    matches = tf.cast(tf.equal(y_true, predictions), tf.float32)
+    return tf.reduce_sum(matches * mask) / tf.reduce_sum(mask)
+
+
+class TrainingCheckpoint(keras.callbacks.Callback):
+    """Custom callback for checkpointing and metrics logging."""
+
+    def __init__(self, save_path: str, save_best_only: bool = True):
+        super().__init__()
+        self.save_path = save_path
+        self.best_loss = float('inf')
+        self.save_best_only = save_best_only
+        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
+
+    def on_epoch_end(self, epoch, logs=None):
+        loss = logs.get('loss', float('inf'))
+        if loss < self.best_loss:
+            self.best_loss = loss
+            if self.save_best_only:
+                self.model.save_weights(self.save_path.replace('.weights.h5', '_best.weights.h5'))
+                print(f"  New best loss: {loss:.4f}")
+
+        if epoch % 10 == 0:
+            self.model.save_weights(self.save_path)
+
+
+class MetricsLogger(keras.callbacks.Callback):
+    """Log training metrics to a JSON file."""
+
+    def __init__(self, log_path: str):
+        super().__init__()
+        self.log_path = log_path
+        self.history = []
+
+    def on_epoch_end(self, epoch, logs=None):
+        entry = {"epoch": epoch, "time": time.strftime("%Y-%m-%d %H:%M:%S")}
+        if logs:
+            entry.update({k: float(v) for k, v in logs.items()})
+        self.history.append(entry)
+        with open(self.log_path, 'w') as f:
+            json.dump(self.history, f, indent=2)
+
+
+def get_device_strategy(device_str: str = "auto"):
+    """Get the best available TensorFlow distribution strategy."""
+    if device_str == "auto":
+        gpus = tf.config.list_physical_devices('GPU')
+        if gpus:
+            print(f"GPUs detected: {len(gpus)}")
+            return tf.distribute.MirroredStrategy()
+        print("No GPU detected, using CPU")
+        return tf.distribute.get_strategy()
+
+    if device_str == "cpu":
+        tf.config.set_visible_devices([], 'GPU')
+        return tf.distribute.get_strategy()
+
+    return tf.distribute.get_strategy()
+
+
+def export_for_go(model: keras.Model, config: TransformerConfig, vocab_data: Dict,
+                  checkpoint_path: str, output_path: str):
+    """Export Keras model to Go-compatible JSON format."""
+    print(f"\nExporting model to Go-compatible format...")
+
+    weights = {}
+    for layer in model.layers:
+        layer_weights = layer.get_weights()
+        if not layer_weights:
+            continue
+
+        # Map Keras layer names to Go-compatible names
+        name = layer.name
+        if name == "token_embedding":
+            weights["token_embedding.weight"] = layer_weights[0].tolist()
+        elif name == "output_projection":
+            weights["output_projection.weight"] = layer_weights[0].T.tolist()
+        elif "mha" in name:
+            # MultiHeadAttention: query, key, value, output weights
+            prefix = name.replace("_mha", "")
+            # Keras MHA stores weights differently; extract what we can
+            # For simplicity, we store the full attention weights
+            for i, w in enumerate(layer_weights):
+                weights[f"{name}.weight_{i}"] = w.tolist()
+        elif "ln" in name:
+            for i, w in enumerate(layer_weights):
+                key = "gamma" if i == 0 else "beta"
+                weights[f"{name}.{key}"] = w.tolist()
+        elif "ff" in name:
+            for i, w in enumerate(layer_weights):
+                key = "weight" if len(w.shape) >= 2 else "bias"
+                weights[f"{name}.{key}"] = w.tolist()
+        else:
+            for i, w in enumerate(layer_weights):
+                weights[f"{name}.weight_{i}"] = w.tolist()
+
+    export_data = {
+        "metadata": {
+            "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "framework": "tensorflow",
+            "tensorflow_version": tf.__version__,
+            "training_completed": True,
+        },
+        "config": config.to_dict(),
+        "vocab": vocab_data,
+        "weights": weights
+    }
+
+    with open(output_path, 'w', encoding='utf-8') as f:
         json.dump(export_data, f, indent=2)
-    
-    print(f"✓ Exported model to {output_path}")
-    print(f"  File size: {os.path.getsize(output_path) / 1e6:.2f} MB")
+
+    file_size = os.path.getsize(output_path) / 1e6
+    print(f"Exported to {output_path} ({file_size:.2f} MB)")
+    return output_path
 
 
 def main():
-    parser = argparse.ArgumentParser(description='GPU Training for LMCS LLM')
-    
+    parser = argparse.ArgumentParser(description='GPU Training for LMCS LLM (TensorFlow)')
+
     # Device
     parser.add_argument('--device', type=str, default='auto',
-                       help='Device: auto, mps, cuda, cpu')
-    
+                       help='Device strategy: auto, cpu')
+
     # Training
     parser.add_argument('--epochs', type=int, default=300,
                        help='Number of training epochs')
@@ -367,117 +377,129 @@ def main():
                        help='Number of layers')
     parser.add_argument('--n-heads', type=int, default=8,
                        help='Number of attention heads')
-    
+
     # Data
-    parser.add_argument('--data-path', type=str, default='../dataset/data/train_enriched.txt',
+    parser.add_argument('--data-path', type=str, default='data/merged_train.txt',
                        help='Path to training data')
     parser.add_argument('--vocab-size', type=int, default=8000,
                        help='Vocabulary size')
-    
+
     # Checkpoint
     parser.add_argument('--resume', type=str, default=None,
-                       help='Path to checkpoint to resume from')
-    parser.add_argument('--save-path', type=str, default='./checkpoints/model.pt',
+                       help='Path to checkpoint weights to resume from')
+    parser.add_argument('--save-path', type=str, default='checkpoints/model.weights.h5',
                        help='Path to save checkpoints')
     parser.add_argument('--export-go', type=str, default=None,
                        help='Export model for Go (output JSON path)')
-    
+
     args = parser.parse_args()
-    
-    # Get device
-    device = get_device(args.device)
-    print(f"Using device: {device}")
-    print(f"Device name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else device}")
-    
+
+    # Device strategy
+    strategy = get_device_strategy(args.device)
+    print(f"Using strategy: {strategy}")
+
+    # Load data
+    data_path = Path(args.data_path)
+    if not data_path.exists():
+        print(f"Warning: Data file not found at {data_path}")
+        print("Using sample text...")
+        text = "o rato roeu a roupa do rei de roma " * 1000
+    else:
+        with open(data_path, 'r', encoding='utf-8') as f:
+            text = f.read()
+        print(f"Loaded {len(text)} characters from {data_path}")
+
+    # Extract vocabulary
+    print("Extracting vocabulary...")
+    word_to_id, id_to_word = extract_vocabulary(text, args.vocab_size)
+    vocab_size = len(word_to_id)
+    print(f"Vocabulary size: {vocab_size}")
+
+    # Save vocabulary
+    vocab_data = {
+        "vocab_size": vocab_size,
+        "word_to_id": word_to_id,
+        "id_to_word": {str(k): v for k, v in id_to_word.items()},
+    }
+    with open("vocab_trained.json", 'w', encoding='utf-8') as f:
+        json.dump(vocab_data, f, indent=2, ensure_ascii=False)
+
     # Create config
     config = TransformerConfig(
-        vocab_size=args.vocab_size,
+        vocab_size=vocab_size,
         d_model=args.d_model,
         n_heads=args.n_heads,
         n_layers=args.n_layers,
         max_seq_len=args.max_seq_len,
     )
-    
-    # Create model
-    model = TransformerModel(config)
-    num_params = sum(p.numel() for p in model.parameters())
-    print(f"Model created: {num_params / 1e6:.2f}M parameters")
-    
-    # Create trainer
-    trainer = Trainer(
-        model=model,
-        device=device,
-        learning_rate=args.learning_rate,
-    )
-    
-    # Load checkpoint if resuming
-    if args.resume:
-        trainer.load_checkpoint(args.resume)
-    
-    # Load data
-    if os.path.exists(args.data_path):
-        with open(args.data_path, 'r') as f:
-            text = f.read()
-    else:
-        print(f"Warning: Data file not found at {args.data_path}, using sample text")
-        text = "o rato roeu a roupa do rei de roma " * 1000
-    
-    dataset = TextDataset(text, max_seq_len=args.max_seq_len)
-    dataloader = DataLoader(
-        dataset,
-        batch_size=args.batch_size,
-        shuffle=True,
-        num_workers=0,  # Set to >0 for faster data loading
-    )
-    
-    # Training loop
-    print(f"\nStarting training for {args.epochs} epochs")
-    print(f"Batch size: {args.batch_size}, Learning rate: {args.learning_rate}")
-    print(f"Device: {device}\n")
-    
+
+    # Create dataset
+    dataset = TextDataset(text, word_to_id, max_seq_len=args.max_seq_len)
+    train_ds = create_tf_dataset(dataset, batch_size=args.batch_size)
+
+    # Build model within strategy scope
+    with strategy.scope():
+        model = create_transformer_model(config)
+        model.compile(
+            optimizer=keras.optimizers.AdamW(
+                learning_rate=args.learning_rate,
+                weight_decay=0.01
+            ),
+            loss=masked_sparse_categorical_crossentropy,
+            metrics=[masked_accuracy]
+        )
+
+    model.summary()
+
+    # Resume if checkpoint exists
+    if args.resume and Path(args.resume).exists():
+        print(f"Resuming from {args.resume}")
+        model.load_weights(args.resume)
+
+    # Callbacks
+    callbacks = [
+        TrainingCheckpoint(args.save_path),
+        MetricsLogger("training_metrics.json"),
+        keras.callbacks.ReduceLROnPlateau(
+            monitor='loss', factor=0.5, patience=10, min_lr=1e-6
+        ),
+        keras.callbacks.EarlyStopping(
+            monitor='loss', patience=30, restore_best_weights=True
+        ),
+    ]
+
+    # Training
+    print(f"\n{'='*60}")
+    print(f"Starting training for {args.epochs} epochs")
+    print(f"Batch size: {args.batch_size}, LR: {args.learning_rate}")
+    print(f"Device: {strategy}")
+    print(f"{'='*60}\n")
+
     start_time = time.time()
-    
-    for epoch in range(args.epochs):
-        trainer.epoch = epoch
-        
-        # Train
-        train_loss = trainer.train_epoch(dataloader)
-        
-        # Log
-        elapsed = time.time() - start_time
-        print(f"Epoch {epoch}/{args.epochs} - "
-              f"Loss: {train_loss:.4f} - "
-              f"Time: {elapsed:.1f}s")
-        
-        # Save checkpoint
-        is_best = train_loss < trainer.best_loss
-        if is_best:
-            trainer.best_loss = train_loss
-        
-        if epoch % 10 == 0 or is_best:
-            trainer.save_checkpoint(args.save_path, is_best=is_best)
-    
-    # Export for Go if requested
+    history = model.fit(train_ds, epochs=args.epochs, callbacks=callbacks, verbose=1)
+
+    # Save final checkpoint
+    model.save_weights(args.save_path)
+
+    # Export for Go
     if args.export_go:
-        export_for_go(args.save_path, args.export_go)
-    
+        export_for_go(model, config, vocab_data, args.save_path, args.export_go)
+
     total_time = time.time() - start_time
     print(f"\n{'='*60}")
-    print(f"✅ Training completed!")
-    print(f"{'='*60}")
+    print(f"Training completed!")
     print(f"Total time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
-    print(f"Best loss: {trainer.best_loss:.4f}")
-    print(f"Final epoch: {args.epochs}")
+    print(f"Final loss: {history.history['loss'][-1]:.4f}")
     print(f"{'='*60}")
-    
-    # Create completion marker file
+
+    # Create completion marker
     completion_marker = Path(args.save_path).parent / "training_complete.txt"
     with open(completion_marker, 'w') as f:
         f.write(f"Training completed at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Total epochs: {args.epochs}\n")
-        f.write(f"Best loss: {trainer.best_loss:.4f}\n")
+        f.write(f"Final loss: {history.history['loss'][-1]:.4f}\n")
         f.write(f"Total time: {total_time:.1f}s\n")
-    
+
     print(f"Completion marker saved to: {completion_marker}")
 
 

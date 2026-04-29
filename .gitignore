@@ -90,3 +90,7 @@ debug.test
 
 # Config files Train
 config.trained.json
+
+#frontend
+.npm-cache
+node_modules/
