@@ -306,6 +306,9 @@ func (h *Handler) generateTokensStreaming(promptTokens []int, maxTokens int, tem
 	// Penalidade de repetição
 	repetitionPenalty := 1.3
 
+	// Top-p nucleus sampling
+	topP := 0.9
+
 	for i := 0; i < maxTokens; i++ {
 		// Forward pass
 		output := h.model.Forward(currentTokens)
@@ -328,6 +331,9 @@ func (h *Handler) generateTokensStreaming(promptTokens []int, maxTokens int, tem
 
 		// Aplicar penalidade de repetição aos logits
 		logits = model.ApplyRepetitionPenalty(logits, generated, repetitionPenalty)
+
+		// Aplicar top-p nucleus sampling
+		logits = model.ApplyTopPSampling(logits, topP)
 
 		// Aplicar temperatura aos logits antes do softmax
 		if temperature > 0 && temperature != 1.0 {

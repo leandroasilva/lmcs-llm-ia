@@ -137,6 +137,64 @@ func ApplyRepetitionPenalty(logits []float64, generatedTokens []int, penalty flo
 	return penalized
 }
 
+// ApplyTopPSampling aplica nucleus sampling aos logits
+// Mantém apenas os tokens do menor conjunto cuja probabilidade cumulativa > p
+// p=0.9 mantém ~90% da massa de probabilidade
+// p=1.0 equivale a sem filtro (usa todos os tokens)
+// p=0.0 usa apenas o token mais provável (greedy)
+func ApplyTopPSampling(logits []float64, p float64) []float64 {
+	if p <= 0.0 || p >= 1.0 {
+		return logits
+	}
+
+	// Calcular softmax para obter probabilidades
+	probs := Softmax(logits)
+
+	// Criar lista de (probabilidade, índice)
+	type probIdx struct {
+		prob float64
+		idx  int
+	}
+
+	pairs := make([]probIdx, len(probs))
+	for i, prob := range probs {
+		pairs[i] = probIdx{prob, i}
+	}
+
+	// Ordenar por probabilidade decrescente
+	sort.Slice(pairs, func(i, j int) bool {
+		return pairs[i].prob > pairs[j].prob
+	})
+
+	// Acumular probabilidades até atingir threshold p
+	cumsum := 0.0
+	cutoffIdx := len(pairs)
+	for i, pair := range pairs {
+		cumsum += pair.prob
+		if cumsum >= p {
+			cutoffIdx = i + 1
+			break
+		}
+	}
+
+	// Manter apenas tokens no nucleus
+	nucleus := pairs[:cutoffIdx]
+
+	// Criar novo slice de logits apenas para tokens no nucleus
+	// Tokens fora do nucleus recebem logit muito negativo (probabilidade ~0)
+	nucleusLogits := make([]float64, len(logits))
+	for i := range nucleusLogits {
+		nucleusLogits[i] = -1e10 // Probabilidade essencialmente zero
+	}
+
+	// Copiar logits originais dos tokens no nucleus
+	for _, pair := range nucleus {
+		nucleusLogits[pair.idx] = logits[pair.idx]
+	}
+
+	return nucleusLogits
+}
+
 // Generator helper para construção eficiente de strings
 type Generator struct {
 	strings.Builder

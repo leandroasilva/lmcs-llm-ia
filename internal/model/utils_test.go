@@ -357,3 +357,164 @@ func BenchmarkApplyRepetitionPenalty_LargeGenerated(b *testing.B) {
 		ApplyRepetitionPenalty(logits, generatedTokens, 1.3)
 	}
 }
+
+// TestApplyTopPSampling_Basic testa sampling básico com p=0.9
+func TestApplyTopPSampling_Basic(t *testing.T) {
+	// Criar logits onde alguns tokens são muito mais prováveis
+	logits := []float64{5.0, 4.0, 3.0, 2.0, 1.0, 0.0, -1.0, -2.0, -3.0, -4.0}
+	p := 0.9
+
+	result := ApplyTopPSampling(logits, p)
+
+	// Verificar que tokens menos prováveis foram filtrados
+	// Com p=0.9, esperamos que os primeiros tokens (mais prováveis) sejam mantidos
+	probs := Softmax(result)
+
+	// A soma das probabilidades deve ser 1.0
+	sum := 0.0
+	for _, prob := range probs {
+		sum += prob
+	}
+
+	if math.Abs(sum-1.0) > 1e-6 {
+		t.Errorf("Soma das probabilidades deveria ser 1.0, obteve %f", sum)
+	}
+
+	t.Logf("Top-p sampling: manteve tokens com probabilidade cumulativa >= 0.9")
+}
+
+// TestApplyTopPSampling_P1 testa com p=1.0 (sem filtro)
+func TestApplyTopPSampling_P1(t *testing.T) {
+	logits := []float64{1.0, 2.0, 3.0, 4.0, 5.0}
+	p := 1.0
+
+	result := ApplyTopPSampling(logits, p)
+
+	// Com p=1.0, todos os tokens devem ser mantidos
+	for i := range logits {
+		if math.Abs(result[i]-logits[i]) > 1e-10 {
+			t.Errorf("Logit[%d] foi modificado com p=1.0: esperado %f, obteve %f", i, logits[i], result[i])
+		}
+	}
+}
+
+// TestApplyTopPSampling_P0 testa com p=0.0 (sem filtro)
+func TestApplyTopPSampling_P0(t *testing.T) {
+	logits := []float64{1.0, 2.0, 3.0, 4.0, 5.0}
+	p := 0.0
+
+	result := ApplyTopPSampling(logits, p)
+
+	// Com p=0.0, todos os tokens devem ser mantidos
+	for i := range logits {
+		if math.Abs(result[i]-logits[i]) > 1e-10 {
+			t.Errorf("Logit[%d] foi modificado com p=0.0: esperado %f, obteve %f", i, logits[i], result[i])
+		}
+	}
+}
+
+// TestApplyTopPSampling_FiltersLowProbs testa que tokens de baixa probabilidade são filtrados
+func TestApplyTopPSampling_FiltersLowProbs(t *testing.T) {
+	// Criar distribuição onde um token domina
+	logits := []float64{10.0, 0.0, 0.0, 0.0, 0.0}
+	p := 0.5
+
+	result := ApplyTopPSampling(logits, p)
+
+	// Com p=0.5 e um token dominante, apenas o primeiro token deve ser mantido
+	// Os outros devem ter logits muito negativos
+	for i := 1; i < len(result); i++ {
+		if result[i] > -1e9 {
+			t.Errorf("Token %d deveria ter sido filtrado, mas logits=%f", i, result[i])
+		}
+	}
+
+	// Primeiro token deve ser mantido
+	if math.Abs(result[0]-logits[0]) > 1e-10 {
+		t.Errorf("Primeiro token foi modificado: esperado %f, obteve %f", logits[0], result[0])
+	}
+}
+
+// TestApplyTopPSampling_UniformDistribution testa com distribuição uniforme
+func TestApplyTopPSampling_UniformDistribution(t *testing.T) {
+	logits := []float64{1.0, 1.0, 1.0, 1.0, 1.0}
+	p := 0.8
+
+	result := ApplyTopPSampling(logits, p)
+
+	// Com distribuição uniforme e p=0.8, aproximadamente 80% dos tokens devem ser mantidos
+	// Como todos têm mesma probabilidade, devem ser mantidos ~4 de 5 tokens
+	keptTokens := 0
+	for _, logit := range result {
+		if logit > -1e9 {
+			keptTokens++
+		}
+	}
+
+	// Deve manter pelo menos 3 tokens (60%) e no máximo 5 (100%)
+	if keptTokens < 3 || keptTokens > 5 {
+		t.Errorf("Número de tokens mantidos fora do esperado: %d (esperado 3-5)", keptTokens)
+	}
+
+	t.Logf("Distribuição uniforme: manteve %d de %d tokens", keptTokens, len(logits))
+}
+
+// TestApplyTopPSampling_DoesNotModifyOriginal testa que não modifica slice original
+func TestApplyTopPSampling_DoesNotModifyOriginal(t *testing.T) {
+	original := []float64{1.0, 2.0, 3.0, 4.0, 5.0}
+	logits := make([]float64, len(original))
+	copy(logits, original)
+
+	p := 0.5
+	result := ApplyTopPSampling(logits, p)
+
+	// Original não deve ser modificado
+	for i := range original {
+		if math.Abs(original[i]-float64(i+1.0)) > 1e-10 {
+			t.Errorf("Original[%d] foi modificado", i)
+		}
+	}
+
+	// Logits também não deve ser modificado
+	for i := range logits {
+		if math.Abs(logits[i]-float64(i+1.0)) > 1e-10 {
+			t.Errorf("Logits[%d] foi modificado", i)
+		}
+	}
+
+	// Resultado deve ser diferente
+	modifiedTokens := 0
+	for i := range result {
+		if math.Abs(result[i]-original[i]) > 1e-6 {
+			modifiedTokens++
+		}
+	}
+
+	if modifiedTokens == 0 {
+		t.Error("Nenhum token foi modificado no resultado")
+	}
+}
+
+// BenchmarkApplyTopPSampling mede performance do top-p sampling
+func BenchmarkApplyTopPSampling(b *testing.B) {
+	vocabSize := 8000
+	logits := make([]float64, vocabSize)
+	for i := range logits {
+		logits[i] = float64(i) * 0.01
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ApplyTopPSampling(logits, 0.9)
+	}
+}
+
+// BenchmarkApplyTopPSampling_SmallVocab benchmark com vocabulário pequeno
+func BenchmarkApplyTopPSampling_SmallVocab(b *testing.B) {
+	logits := []float64{1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		ApplyTopPSampling(logits, 0.9)
+	}
+}

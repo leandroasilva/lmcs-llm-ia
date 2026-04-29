@@ -325,6 +325,9 @@ func (m *TransformerModel) GenerateWithKVCache(prompt string, maxTokens int, tem
 	// Penalidade de repetição (1.2 = moderada, 1.5 = forte)
 	repetitionPenalty := 1.3
 
+	// Top-p nucleus sampling (0.9 = bom equilíbrio entre qualidade e diversidade)
+	topP := 0.9
+
 	for i := 0; i < maxTokens; i++ {
 		var lastHidden []float64
 
@@ -353,6 +356,9 @@ func (m *TransformerModel) GenerateWithKVCache(prompt string, maxTokens int, tem
 
 		// Aplicar penalidade de repetição aos logits
 		logits = ApplyRepetitionPenalty(logits, generatedTokens, repetitionPenalty)
+
+		// Aplicar top-p nucleus sampling
+		logits = ApplyTopPSampling(logits, topP)
 
 		// Aplicar temperatura
 		if temperature > 0 && temperature != 1.0 {
