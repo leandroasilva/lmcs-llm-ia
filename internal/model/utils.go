@@ -127,17 +127,10 @@ func ApplyRepetitionPenalty(logits []float64, generatedTokens []int, penalty flo
 
 	for tokenID, count := range tokenCounts {
 		if tokenID >= 0 && tokenID < len(penalized) {
-			// Penalidade proporcional ao número de ocorrências
-			// penalty ^ count torna tokens muito repetidos menos prováveis
-			penaltyFactor := math.Pow(penalty, float64(count))
-
-			// Para logits positivos: dividir por penalty (reduz probabilidade)
-			// Para logits negativos: multiplicar por penalty (mantém negativo)
-			if penalized[tokenID] > 0 {
-				penalized[tokenID] /= penaltyFactor
-			} else {
-				penalized[tokenID] *= penaltyFactor
-			}
+			// Penalidade mais forte: subtrair um valor fixo por ocorrência
+			// Isso é mais eficaz que divisão para evitar repetição
+			penaltyAmount := float64(count) * (penalty - 1.0) * 10.0
+			penalized[tokenID] -= penaltyAmount
 		}
 	}
 
