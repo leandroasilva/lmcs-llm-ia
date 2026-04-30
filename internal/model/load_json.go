@@ -118,6 +118,14 @@ func loadJSONWeights(m *TransformerModel, weights map[string]interface{}, vocabS
 		}
 	}
 
+	// Final layer norm
+	if err := loadJSONVector(m.FinalLNWeight, weights, "final_layer_norm.weight", dModel); err != nil {
+		return err
+	}
+	if err := loadJSONVector(m.FinalLNBias, weights, "final_layer_norm.bias", dModel); err != nil {
+		return err
+	}
+
 	// Output projection - usar token_embedding transpose (tied weights)
 	m.WOut.CloneFrom(m.TokenEmbedding)
 	m.BOut.Zero()

@@ -1,29 +1,11 @@
 {
   "model": {
-    "vocab_size": 8000,
+    "vocab_size": 3747,
     "d_model": 512,
     "n_heads": 8,
     "n_layers": 6,
     "max_seq_len": 256,
     "ff_hidden": 1024,
     "dropout": 0.1
-  },
-  "training": {
-    "device": "auto",
-    "epochs": 300,
-    "batch_size": 16,
-    "learning_rate": 1e-4,
-    "weight_decay": 0.01,
-    "gradient_clip": 1.0,
-    "data_path": "data/merged_train.txt"
-  },
-  "checkpoint": {
-    "save_path": "./checkpoints/model.weights.h5",
-    "resume": null,
-    "save_interval": 10
-  },
-  "export": {
-    "export_go": true,
-    "output_path": "../config.trained.json"
   }
 }

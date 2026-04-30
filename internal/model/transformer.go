@@ -41,11 +41,13 @@ type TransformerModel struct {
 	TransformerLayers []TransformerLayer
 
 	// Output layer
-	Layernorm *mat.Dense // [d_model, d_model]
-	WOut      *mat.Dense // [vocab_size, d_model]
-	BOut      *mat.Dense // [vocab_size, 1]
-	GradWOut  *mat.Dense // Gradientes
-	GradBOut  *mat.Dense // Gradientes
+	Layernorm     *mat.Dense // [d_model, d_model] (deprecated - kept for gob compat)
+	FinalLNWeight *mat.Dense // [d_model, 1] - Final layer norm gamma
+	FinalLNBias   *mat.Dense // [d_model, 1] - Final layer norm beta
+	WOut          *mat.Dense // [vocab_size, d_model]
+	BOut          *mat.Dense // [vocab_size, 1]
+	GradWOut      *mat.Dense // Gradientes
+	GradBOut      *mat.Dense // Gradientes
 
 	// Tokenizer
 	Vocab         []string       // Vocabulary (word-level)
@@ -137,6 +139,8 @@ func NewTransformerModel(vocabSize, dModel, nHeads, nLayers, maxSeqLen, ffHidden
 
 	// Layer norm final
 	model.Layernorm = mat.NewDense(dModel, dModel, identityMatrix(dModel))
+	model.FinalLNWeight = mat.NewDense(dModel, 1, onesVector(dModel))
+	model.FinalLNBias = mat.NewDense(dModel, 1, make([]float64, dModel))
 
 	// Inicializar gradientes
 	model.GradTokenEmbedding = mat.NewDense(vocabSize, dModel, nil)
@@ -355,7 +359,7 @@ func (m *TransformerModel) Forward(inputTokens []int) *mat.Dense {
 	}
 
 	// Layer normalization final
-	X = applyLayerNorm(X, seqLen, m.DModel)
+	X = applyLayerNormWithWeights(X, seqLen, m.DModel, m.FinalLNWeight, m.FinalLNBias)
 
 	return X
 }
@@ -875,6 +879,37 @@ func feedForward(layer *TransformerLayer, X *mat.Dense, seqLen, dModel int) *mat
 }
 
 // applyLayerNorm aplica layer normalization
+func applyLayerNormWithWeights(X *mat.Dense, seqLen, dModel int, gamma, beta *mat.Dense) *mat.Dense {
+	result := mat.NewDense(seqLen, dModel, nil)
+
+	for i := 0; i < seqLen; i++ {
+		// Calcular mean e variance
+		sum := 0.0
+		for j := 0; j < dModel; j++ {
+			sum += X.At(i, j)
+		}
+		mean := sum / float64(dModel)
+
+		varSum := 0.0
+		for j := 0; j < dModel; j++ {
+			diff := X.At(i, j) - mean
+			varSum += diff * diff
+		}
+		variance := varSum / float64(dModel)
+		std := math.Sqrt(variance + 1e-5)
+
+		// Normalizar com pesos treináveis
+		for j := 0; j < dModel; j++ {
+			norm := (X.At(i, j) - mean) / std
+			g := gamma.At(j, 0)
+			b := beta.At(j, 0)
+			result.Set(i, j, g*norm+b)
+		}
+	}
+
+	return result
+}
+
 func applyLayerNorm(X *mat.Dense, seqLen, dModel int) *mat.Dense {
 	result := mat.NewDense(seqLen, dModel, nil)
 

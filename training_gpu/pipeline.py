@@ -5,7 +5,7 @@ LMCS LLM Training Pipeline
 Orchestrates the full training workflow:
 1. Download datasets
 2. Merge and normalize
-3. Train model with TensorFlow
+3. Train model with PyTorch (GPU)
 4. Export to Go-compatible JSON
 
 Usage:
@@ -40,7 +40,7 @@ def main():
     parser.add_argument("--skip-export", action="store_true", help="Skip export to Go")
     parser.add_argument("--epochs", type=int, default=300, help="Training epochs")
     parser.add_argument("--batch-size", type=int, default=16, help="Batch size")
-    parser.add_argument("--device", type=str, default="auto", help="Device: auto, cpu")
+    parser.add_argument("--device", type=str, default="auto", help="Device: auto, mps, cuda, cpu")
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent
@@ -72,7 +72,7 @@ def main():
                 "--batch-size", str(args.batch_size),
                 "--device", args.device,
                 "--data-path", "data/train.txt",
-                "--save-path", "checkpoints/model.weights.h5",
+                "--save-path", "checkpoints/model.pt",
             ],
             cwd=base_dir,
         )
@@ -80,9 +80,9 @@ def main():
     # 4. Export to Go
     if not args.skip_export:
         # Find best checkpoint
-        checkpoint = base_dir / "checkpoints" / "model.weights.h5"
+        checkpoint = base_dir / "checkpoints" / "model_best.pt"
         if not checkpoint.exists():
-            checkpoint = base_dir / "checkpoints" / "model_best.weights.h5"
+            checkpoint = base_dir / "checkpoints" / "model.pt"
 
         if checkpoint.exists():
             run_step(

@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 """
-GPU Training for LMCS LLM - TensorFlow/Keras Version
-=====================================================
-Supports:
-- Apple Silicon (M1/M2/M3) via Metal (mps)
-- NVIDIA GPUs via CUDA
-- CPU fallback
+GPU Training for LMCS LLM - PyTorch Version
+=============================================
+Always uses GPU (Apple Metal MPS or NVIDIA CUDA).
+Falls back to CPU only if no GPU is available.
 
 Usage:
-    python train_gpu.py --device auto --epochs 300 --batch-size 16
-    python train_gpu.py --device mps --epochs 300
-    python train_gpu.py --device cpu --epochs 100
+    python train_gpu.py --epochs 300 --batch-size 16
+    python train_gpu.py --epochs 100 --batch-size 32
 """
 
 import argparse
 import json
+import math
 import os
 import sys
 import time
@@ -22,14 +20,33 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
-import tensorflow as tf
-from tensorflow import keras
-from tensorflow.keras import layers
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
 
-# Enable mixed precision for faster training on compatible GPUs
-policy = tf.keras.mixed_precision.Policy('mixed_float16')
-tf.keras.mixed_precision.set_global_policy(policy)
 
+# ============================================================
+# Device selection — always prefer GPU
+# ============================================================
+
+def get_device() -> torch.device:
+    """Select the best available device: MPS > CUDA > CPU."""
+    if torch.backends.mps.is_available():
+        device = torch.device("mps")
+        print(f"Using Apple Metal GPU (MPS)")
+    elif torch.cuda.is_available():
+        device = torch.device("cuda")
+        print(f"Using NVIDIA CUDA GPU: {torch.cuda.get_device_name(0)}")
+    else:
+        device = torch.device("cpu")
+        print("WARNING: No GPU found, falling back to CPU")
+    return device
+
+
+# ============================================================
+# Configuration
+# ============================================================
 
 class TransformerConfig:
     """Configuration for Transformer model."""
@@ -57,81 +74,169 @@ class TransformerConfig:
 
     @classmethod
     def from_dict(cls, config_dict: Dict) -> 'TransformerConfig':
-        return cls(**config_dict)
+        # Filter out unknown keys
+        known = {k: v for k, v in config_dict.items() if k in cls.__init__.__code__.co_varnames}
+        return cls(**known)
 
 
-def positional_encoding(max_seq_len: int, d_model: int) -> tf.Tensor:
-    """Create sinusoidal positional encodings."""
-    positions = np.arange(max_seq_len)[:, np.newaxis]
-    div_term = np.exp(np.arange(0, d_model, 2) * -(np.log(10000.0) / d_model))
+# ============================================================
+# Model
+# ============================================================
 
-    pe = np.zeros((max_seq_len, d_model))
-    pe[:, 0::2] = np.sin(positions * div_term)
-    pe[:, 1::2] = np.cos(positions * div_term)
+class PositionalEncoding(nn.Module):
+    """Sinusoidal positional encoding."""
 
-    return tf.constant(pe, dtype=tf.float32)
+    def __init__(self, max_seq_len: int, d_model: int):
+        super().__init__()
+        pe = torch.zeros(max_seq_len, d_model)
+        position = torch.arange(0, max_seq_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe.unsqueeze(0))  # [1, max_seq_len, d_model]
 
-
-def create_transformer_model(config: TransformerConfig) -> keras.Model:
-    """Create a Transformer language model using Keras Functional API."""
-
-    inputs = layers.Input(shape=(config.max_seq_len,), dtype=tf.int32, name="input_ids")
-
-    # Token embeddings + positional encoding
-    token_embed = layers.Embedding(config.vocab_size, config.d_model, name="token_embedding")
-    x = token_embed(inputs)
-
-    pos_enc = positional_encoding(config.max_seq_len, config.d_model)
-    x = x + pos_enc
-    x = layers.Dropout(config.dropout)(x)
-
-    # Transformer encoder layers
-    for i in range(config.n_layers):
-        # Multi-head self-attention
-        attn_output = layers.MultiHeadAttention(
-            num_heads=config.n_heads,
-            key_dim=config.d_model // config.n_heads,
-            dropout=config.dropout,
-            name=f"transformer_layer_{i}_mha"
-        )(x, x, use_causal_mask=True)
-
-        # Layer norm + residual
-        x = layers.LayerNormalization(epsilon=1e-6, name=f"transformer_layer_{i}_ln1")(x + attn_output)
-
-        # Feed-forward network
-        ff_output = layers.Dense(config.ff_hidden, activation='gelu', name=f"transformer_layer_{i}_ff1")(x)
-        ff_output = layers.Dropout(config.dropout)(ff_output)
-        ff_output = layers.Dense(config.d_model, name=f"transformer_layer_{i}_ff2")(ff_output)
-
-        # Layer norm + residual
-        x = layers.LayerNormalization(epsilon=1e-6, name=f"transformer_layer_{i}_ln2")(x + ff_output)
-
-    # Final layer norm
-    x = layers.LayerNormalization(epsilon=1e-6, name="final_layer_norm")(x)
-
-    # Output projection (tied with token embedding)
-    logits = layers.Dense(config.vocab_size, use_bias=False, name="output_projection")(x)
-
-    model = keras.Model(inputs=inputs, outputs=logits, name="lmcs_transformer")
-
-    # Tie weights: output projection = token embedding transpose
-    model.get_layer("output_projection").set_weights([
-        model.get_layer("token_embedding").get_weights()[0].T
-    ])
-
-    return model
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return x + self.pe[:, :x.size(1)]
 
 
-class TextDataset:
+class CausalSelfAttention(nn.Module):
+    """Efficient causal self-attention with manual QKV projection."""
+
+    def __init__(self, config: TransformerConfig):
+        super().__init__()
+        self.n_heads = config.n_heads
+        self.head_dim = config.d_model // config.n_heads
+        self.scale = self.head_dim ** -0.5
+
+        # Combined QKV projection for efficiency
+        self.qkv_proj = nn.Linear(config.d_model, 3 * config.d_model, bias=True)
+        self.out_proj = nn.Linear(config.d_model, config.d_model, bias=True)
+
+        # Pre-register causal mask buffer
+        self.register_buffer("causal_mask", None)
+
+    def _create_causal_mask(self, seq_len: int, device: torch.device) -> torch.Tensor:
+        mask = torch.triu(torch.ones(seq_len, seq_len, device=device), diagonal=1).bool()
+        return mask
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, S, D = x.shape
+
+        # QKV projection
+        qkv = self.qkv_proj(x)  # [B, S, 3*D]
+        q, k, v = qkv.chunk(3, dim=-1)  # each [B, S, D]
+
+        # Reshape to heads
+        q = q.view(B, S, self.n_heads, self.head_dim).transpose(1, 2)  # [B, H, S, HD]
+        k = k.view(B, S, self.n_heads, self.head_dim).transpose(1, 2)
+        v = v.view(B, S, self.n_heads, self.head_dim).transpose(1, 2)
+
+        # Scaled dot-product attention with causal mask
+        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale  # [B, H, S, S]
+
+        # Apply causal mask
+        if self.causal_mask is None or self.causal_mask.size(0) < S:
+            self.causal_mask = self._create_causal_mask(S, x.device)
+        attn_weights.masked_fill_(self.causal_mask[:S, :S], float('-inf'))
+
+        attn_weights = F.softmax(attn_weights, dim=-1)
+
+        # Weighted sum
+        attn_out = torch.matmul(attn_weights, v)  # [B, H, S, HD]
+
+        # Reshape back
+        attn_out = attn_out.transpose(1, 2).contiguous().view(B, S, D)
+
+        return self.out_proj(attn_out)
+
+
+class TransformerBlock(nn.Module):
+    """Single Transformer encoder block with causal self-attention."""
+
+    def __init__(self, config: TransformerConfig):
+        super().__init__()
+        self.attn = CausalSelfAttention(config)
+        self.ln1 = nn.LayerNorm(config.d_model, eps=1e-6)
+        self.ln2 = nn.LayerNorm(config.d_model, eps=1e-6)
+        self.ff = nn.Sequential(
+            nn.Linear(config.d_model, config.ff_hidden),
+            nn.GELU(),
+            nn.Dropout(config.dropout),
+            nn.Linear(config.ff_hidden, config.d_model),
+            nn.Dropout(config.dropout),
+        )
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # Self-attention with residual
+        attn_out = self.attn(x)
+        x = self.ln1(x + attn_out)
+
+        # Feed-forward with residual
+        x = self.ln2(x + self.ff(x))
+        return x
+
+
+class TransformerLM(nn.Module):
+    """Transformer Language Model for text generation."""
+
+    def __init__(self, config: TransformerConfig):
+        super().__init__()
+        self.config = config
+
+        self.token_embedding = nn.Embedding(config.vocab_size, config.d_model)
+        self.pos_encoding = PositionalEncoding(config.max_seq_len, config.d_model)
+        self.dropout = nn.Dropout(config.dropout)
+
+        self.layers = nn.ModuleList([
+            TransformerBlock(config) for _ in range(config.n_layers)
+        ])
+
+        self.final_ln = nn.LayerNorm(config.d_model, eps=1e-6)
+        self.output_proj = nn.Linear(config.d_model, config.vocab_size, bias=False)
+
+        # Tie weights: output projection = token embedding transpose
+        self.output_proj.weight = self.token_embedding.weight
+
+        self.apply(self._init_weights)
+
+    def _init_weights(self, module):
+        if isinstance(module, nn.Linear):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+            if module.bias is not None:
+                torch.nn.init.zeros_(module.bias)
+        elif isinstance(module, nn.Embedding):
+            torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+
+    def forward(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Forward pass. Returns logits [batch, seq_len, vocab_size]."""
+        x = self.token_embedding(input_ids)
+        x = self.pos_encoding(x)
+        x = self.dropout(x)
+
+        for layer in self.layers:
+            x = layer(x)
+
+        x = self.final_ln(x)
+        logits = self.output_proj(x)
+        return logits
+
+
+def create_transformer_model(config: TransformerConfig) -> TransformerLM:
+    """Create a Transformer language model (PyTorch)."""
+    return TransformerLM(config)
+
+
+# ============================================================
+# Dataset
+# ============================================================
+
+class TextDataset(Dataset):
     """Dataset for training on text sequences."""
 
     def __init__(self, text: str, word_to_id: Dict[str, int], max_seq_len: int = 256, stride: int = 128):
         self.word_to_id = word_to_id
         self.max_seq_len = max_seq_len
-        self.stride = stride
         self.unk_id = word_to_id.get("<UNK>", 1)
-        self.bos_id = word_to_id.get("<BOS>", 2)
-        self.eos_id = word_to_id.get("<EOS>", 3)
         self.pad_id = word_to_id.get("<PAD>", 0)
 
         # Tokenize text
@@ -154,38 +259,21 @@ class TextDataset:
 
     def __getitem__(self, idx):
         seq = self.sequences[idx]
-        input_ids = seq[:-1]
-        target_ids = seq[1:]
+        input_ids = torch.tensor(seq[:-1], dtype=torch.long)
+        target_ids = torch.tensor(seq[1:], dtype=torch.long)
         # Pad if necessary
-        while len(input_ids) < self.max_seq_len:
-            input_ids.append(self.pad_id)
-            target_ids.append(self.pad_id)
-        return np.array(input_ids, dtype=np.int32), np.array(target_ids, dtype=np.int32)
+        pad_len = self.max_seq_len - len(input_ids)
+        if pad_len > 0:
+            input_ids = F.pad(input_ids, (0, pad_len), value=self.pad_id)
+            target_ids = F.pad(target_ids, (0, pad_len), value=self.pad_id)
+        return input_ids, target_ids
 
 
-def create_tf_dataset(dataset: TextDataset, batch_size: int, shuffle: bool = True):
-    """Create a tf.data.Dataset from TextDataset."""
-    def generator():
-        indices = list(range(len(dataset)))
-        if shuffle:
-            np.random.shuffle(indices)
-        for idx in indices:
-            yield dataset[idx]
+# ============================================================
+# Vocabulary
+# ============================================================
 
-    tf_ds = tf.data.Dataset.from_generator(
-        generator,
-        output_signature=(
-            tf.TensorSpec(shape=(dataset.max_seq_len,), dtype=tf.int32),
-            tf.TensorSpec(shape=(dataset.max_seq_len,), dtype=tf.int32)
-        )
-    )
-
-    tf_ds = tf_ds.batch(batch_size)
-    tf_ds = tf_ds.prefetch(tf.data.AUTOTUNE)
-    return tf_ds
-
-
-def extract_vocabulary(text: str, vocab_size: int = 8000) -> Dict[str, int]:
+def extract_vocabulary(text: str, vocab_size: int = 8000) -> Tuple[Dict[str, int], Dict[int, str]]:
     """Extract word-level vocabulary from text."""
     words = text.lower().split()
     cleaned = []
@@ -204,18 +292,8 @@ def extract_vocabulary(text: str, vocab_size: int = 8000) -> Dict[str, int]:
     if len(sorted_words) > vocab_size - 4:
         sorted_words = sorted_words[:vocab_size - 4]
 
-    word_to_id = {
-        "<PAD>": 0,
-        "<UNK>": 1,
-        "<BOS>": 2,
-        "<EOS>": 3,
-    }
-    id_to_word = {
-        0: "<PAD>",
-        1: "<UNK>",
-        2: "<BOS>",
-        3: "<EOS>",
-    }
+    word_to_id = {"<PAD>": 0, "<UNK>": 1, "<BOS>": 2, "<EOS>": 3}
+    id_to_word = {0: "<PAD>", 1: "<UNK>", 2: "<BOS>", 3: "<EOS>"}
 
     for i, (word, _) in enumerate(sorted_words):
         token_id = i + 4
@@ -225,191 +303,128 @@ def extract_vocabulary(text: str, vocab_size: int = 8000) -> Dict[str, int]:
     return word_to_id, id_to_word
 
 
-def masked_sparse_categorical_crossentropy(y_true, y_pred):
-    """Custom loss that ignores PAD tokens."""
-    pad_id = 0
-    mask = tf.cast(tf.not_equal(y_true, pad_id), tf.float32)
-    loss = tf.keras.losses.sparse_categorical_crossentropy(y_true, y_pred, from_logits=True)
-    loss = loss * mask
-    return tf.reduce_sum(loss) / tf.reduce_sum(mask)
+# ============================================================
+# Training
+# ============================================================
+
+def train_one_epoch(model, dataloader, optimizer, scheduler, device, pad_id=0):
+    """Train for one epoch."""
+    model.train()
+    total_loss = 0.0
+    total_correct = 0
+    total_tokens = 0
+
+    for batch_idx, (input_ids, target_ids) in enumerate(dataloader):
+        input_ids = input_ids.to(device)
+        target_ids = target_ids.to(device)
+
+        logits = model(input_ids)  # [batch, seq, vocab]
+
+        # Reshape for cross-entropy
+        logits_flat = logits.view(-1, logits.size(-1))
+        targets_flat = target_ids.view(-1)
+
+        # Masked loss — ignore PAD tokens
+        mask = (targets_flat != pad_id)
+        loss = F.cross_entropy(logits_flat[mask], targets_flat[mask])
+
+        optimizer.zero_grad()
+        loss.backward()
+
+        # Gradient clipping
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
+        optimizer.step()
+        # scheduler is epoch-level, no step() here
+
+        total_loss += loss.item() * mask.sum().item()
+        total_tokens += mask.sum().item()
+
+        # Accuracy
+        preds = logits_flat.argmax(dim=-1)
+        correct = (preds[mask] == targets_flat[mask]).sum().item()
+        total_correct += correct
+
+    avg_loss = total_loss / max(total_tokens, 1)
+    accuracy = total_correct / max(total_tokens, 1)
+    return avg_loss, accuracy
 
 
-def masked_accuracy(y_true, y_pred):
-    """Custom accuracy that ignores PAD tokens."""
-    pad_id = 0
-    mask = tf.cast(tf.not_equal(y_true, pad_id), tf.float32)
-    predictions = tf.argmax(y_pred, axis=-1, output_type=tf.int32)
-    matches = tf.cast(tf.equal(y_true, predictions), tf.float32)
-    return tf.reduce_sum(matches * mask) / tf.reduce_sum(mask)
+@torch.no_grad()
+def evaluate(model, dataloader, device, pad_id=0):
+    """Evaluate on validation data."""
+    model.eval()
+    total_loss = 0.0
+    total_tokens = 0
 
+    for input_ids, target_ids in dataloader:
+        input_ids = input_ids.to(device)
+        target_ids = target_ids.to(device)
 
-class TrainingCheckpoint(keras.callbacks.Callback):
-    """Custom callback for checkpointing and metrics logging."""
+        logits = model(input_ids)
+        logits_flat = logits.view(-1, logits.size(-1))
+        targets_flat = target_ids.view(-1)
 
-    def __init__(self, save_path: str, save_best_only: bool = True):
-        super().__init__()
-        self.save_path = save_path
-        self.best_loss = float('inf')
-        self.save_best_only = save_best_only
-        Path(save_path).parent.mkdir(parents=True, exist_ok=True)
-
-    def on_epoch_end(self, epoch, logs=None):
-        loss = logs.get('loss', float('inf'))
-        if loss < self.best_loss:
-            self.best_loss = loss
-            if self.save_best_only:
-                self.model.save_weights(self.save_path.replace('.weights.h5', '_best.weights.h5'))
-                print(f"  New best loss: {loss:.4f}")
-
-        if epoch % 10 == 0:
-            self.model.save_weights(self.save_path)
-
-
-class MetricsLogger(keras.callbacks.Callback):
-    """Log training metrics to a JSON file."""
-
-    def __init__(self, log_path: str):
-        super().__init__()
-        self.log_path = log_path
-        self.history = []
-
-    def on_epoch_end(self, epoch, logs=None):
-        entry = {"epoch": epoch, "time": time.strftime("%Y-%m-%d %H:%M:%S")}
-        if logs:
-            entry.update({k: float(v) for k, v in logs.items()})
-        self.history.append(entry)
-        with open(self.log_path, 'w') as f:
-            json.dump(self.history, f, indent=2)
-
-
-def get_device_strategy(device_str: str = "auto"):
-    """Get the best available TensorFlow distribution strategy."""
-    if device_str == "auto":
-        gpus = tf.config.list_physical_devices('GPU')
-        if gpus:
-            print(f"GPUs detected: {len(gpus)}")
-            return tf.distribute.MirroredStrategy()
-        print("No GPU detected, using CPU")
-        return tf.distribute.get_strategy()
-
-    if device_str == "cpu":
-        tf.config.set_visible_devices([], 'GPU')
-        return tf.distribute.get_strategy()
-
-    return tf.distribute.get_strategy()
-
-
-def export_for_go(model: keras.Model, config: TransformerConfig, vocab_data: Dict,
-                  checkpoint_path: str, output_path: str):
-    """Export Keras model to Go-compatible JSON format."""
-    print(f"\nExporting model to Go-compatible format...")
-
-    weights = {}
-    for layer in model.layers:
-        layer_weights = layer.get_weights()
-        if not layer_weights:
+        mask = (targets_flat != pad_id)
+        if mask.sum() == 0:
             continue
+        loss = F.cross_entropy(logits_flat[mask], targets_flat[mask])
+        total_loss += loss.item() * mask.sum().item()
+        total_tokens += mask.sum().item()
 
-        # Map Keras layer names to Go-compatible names
-        name = layer.name
-        if name == "token_embedding":
-            weights["token_embedding.weight"] = layer_weights[0].tolist()
-        elif name == "output_projection":
-            weights["output_projection.weight"] = layer_weights[0].T.tolist()
-        elif "mha" in name:
-            # MultiHeadAttention: query, key, value, output weights
-            prefix = name.replace("_mha", "")
-            # Keras MHA stores weights differently; extract what we can
-            # For simplicity, we store the full attention weights
-            for i, w in enumerate(layer_weights):
-                weights[f"{name}.weight_{i}"] = w.tolist()
-        elif "ln" in name:
-            for i, w in enumerate(layer_weights):
-                key = "gamma" if i == 0 else "beta"
-                weights[f"{name}.{key}"] = w.tolist()
-        elif "ff" in name:
-            for i, w in enumerate(layer_weights):
-                key = "weight" if len(w.shape) >= 2 else "bias"
-                weights[f"{name}.{key}"] = w.tolist()
-        else:
-            for i, w in enumerate(layer_weights):
-                weights[f"{name}.weight_{i}"] = w.tolist()
-
-    export_data = {
-        "metadata": {
-            "exported_at": time.strftime("%Y-%m-%d %H:%M:%S"),
-            "framework": "tensorflow",
-            "tensorflow_version": tf.__version__,
-            "training_completed": True,
-        },
-        "config": config.to_dict(),
-        "vocab": vocab_data,
-        "weights": weights
-    }
-
-    with open(output_path, 'w', encoding='utf-8') as f:
-        json.dump(export_data, f, indent=2)
-
-    file_size = os.path.getsize(output_path) / 1e6
-    print(f"Exported to {output_path} ({file_size:.2f} MB)")
-    return output_path
+    return total_loss / max(total_tokens, 1)
 
 
 def main():
-    parser = argparse.ArgumentParser(description='GPU Training for LMCS LLM (TensorFlow)')
-
-    # Device
-    parser.add_argument('--device', type=str, default='auto',
-                       help='Device strategy: auto, cpu')
+    parser = argparse.ArgumentParser(description='GPU Training for LMCS LLM (PyTorch)')
 
     # Training
-    parser.add_argument('--epochs', type=int, default=300,
-                       help='Number of training epochs')
-    parser.add_argument('--batch-size', type=int, default=16,
-                       help='Batch size')
-    parser.add_argument('--learning-rate', type=float, default=1e-4,
-                       help='Learning rate')
-    parser.add_argument('--max-seq-len', type=int, default=256,
-                       help='Maximum sequence length')
-    parser.add_argument('--d-model', type=int, default=512,
-                       help='Model dimension')
-    parser.add_argument('--n-layers', type=int, default=6,
-                       help='Number of layers')
-    parser.add_argument('--n-heads', type=int, default=8,
-                       help='Number of attention heads')
+    parser.add_argument('--epochs', type=int, default=300, help='Number of training epochs')
+    parser.add_argument('--batch-size', type=int, default=16, help='Batch size')
+    parser.add_argument('--learning-rate', type=float, default=3e-4, help='Learning rate')
+    parser.add_argument('--max-seq-len', type=int, default=256, help='Maximum sequence length')
+    parser.add_argument('--d-model', type=int, default=512, help='Model dimension')
+    parser.add_argument('--n-layers', type=int, default=6, help='Number of layers')
+    parser.add_argument('--n-heads', type=int, default=8, help='Number of attention heads')
+    parser.add_argument('--ff-hidden', type=int, default=1024, help='FFN hidden dimension')
 
     # Data
-    parser.add_argument('--data-path', type=str, default='data/merged_train.txt',
-                       help='Path to training data')
-    parser.add_argument('--vocab-size', type=int, default=8000,
-                       help='Vocabulary size')
+    parser.add_argument('--data-path', type=str, default='data/train.txt', help='Path to training data')
+    parser.add_argument('--val-path', type=str, default=None, help='Path to validation data')
+    parser.add_argument('--vocab-size', type=int, default=8000, help='Vocabulary size')
 
     # Checkpoint
-    parser.add_argument('--resume', type=str, default=None,
-                       help='Path to checkpoint weights to resume from')
-    parser.add_argument('--save-path', type=str, default='checkpoints/model.weights.h5',
-                       help='Path to save checkpoints')
-    parser.add_argument('--export-go', type=str, default=None,
-                       help='Export model for Go (output JSON path)')
+    parser.add_argument('--resume', type=str, default=None, help='Path to checkpoint to resume from')
+    parser.add_argument('--warmup-steps', type=int, default=200, help='Number of warmup steps')
+    parser.add_argument('--save-path', type=str, default='checkpoints/model.pt', help='Path to save checkpoints')
+
+    # Device (always GPU if available)
+    parser.add_argument('--device', type=str, default='auto', help='Device: auto, mps, cuda, cpu')
 
     args = parser.parse_args()
 
-    # Device strategy
-    strategy = get_device_strategy(args.device)
-    print(f"Using strategy: {strategy}")
+    # ---- Device ----
+    if args.device == "auto":
+        device = get_device()
+    elif args.device == "mps":
+        device = torch.device("mps")
+    elif args.device == "cuda":
+        device = torch.device("cuda")
+    else:
+        device = torch.device("cpu")
+        print("WARNING: Using CPU — training will be slow!")
 
-    # Load data
+    # ---- Load data ----
     data_path = Path(args.data_path)
     if not data_path.exists():
-        print(f"Warning: Data file not found at {data_path}")
-        print("Using sample text...")
-        text = "o rato roeu a roupa do rei de roma " * 1000
-    else:
-        with open(data_path, 'r', encoding='utf-8') as f:
-            text = f.read()
-        print(f"Loaded {len(text)} characters from {data_path}")
+        print(f"ERROR: Data file not found at {data_path}")
+        sys.exit(1)
 
-    # Extract vocabulary
+    with open(data_path, 'r', encoding='utf-8') as f:
+        text = f.read()
+    print(f"Loaded {len(text)} characters from {data_path}")
+
+    # ---- Vocabulary ----
     print("Extracting vocabulary...")
     word_to_id, id_to_word = extract_vocabulary(text, args.vocab_size)
     vocab_size = len(word_to_id)
@@ -424,83 +439,115 @@ def main():
     with open("vocab_trained.json", 'w', encoding='utf-8') as f:
         json.dump(vocab_data, f, indent=2, ensure_ascii=False)
 
-    # Create config
+    # ---- Config ----
     config = TransformerConfig(
         vocab_size=vocab_size,
         d_model=args.d_model,
         n_heads=args.n_heads,
         n_layers=args.n_layers,
         max_seq_len=args.max_seq_len,
+        ff_hidden=args.ff_hidden,
     )
 
-    # Create dataset
-    dataset = TextDataset(text, word_to_id, max_seq_len=args.max_seq_len)
-    train_ds = create_tf_dataset(dataset, batch_size=args.batch_size)
+    # Save config
+    with open("config.train.json", 'w') as f:
+        json.dump({"model": config.to_dict()}, f, indent=2)
 
-    # Build model within strategy scope
-    with strategy.scope():
-        model = create_transformer_model(config)
-        model.compile(
-            optimizer=keras.optimizers.AdamW(
-                learning_rate=args.learning_rate,
-                weight_decay=0.01
-            ),
-            loss=masked_sparse_categorical_crossentropy,
-            metrics=[masked_accuracy]
-        )
+    # ---- Dataset ----
+    train_dataset = TextDataset(text, word_to_id, max_seq_len=args.max_seq_len)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=0, drop_last=False)
 
-    model.summary()
+    val_loader = None
+    if args.val_path and Path(args.val_path).exists():
+        with open(args.val_path, 'r', encoding='utf-8') as f:
+            val_text = f.read()
+        val_dataset = TextDataset(val_text, word_to_id, max_seq_len=args.max_seq_len)
+        val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, num_workers=0)
 
-    # Resume if checkpoint exists
+    # ---- Model ----
+    model = TransformerLM(config).to(device)
+    total_params = sum(p.numel() for p in model.parameters())
+    print(f"Model parameters: {total_params:,} ({total_params/1e6:.2f}M)")
+    print(f"Device: {device}")
+
+    # Resume from checkpoint
+    start_epoch = 0
     if args.resume and Path(args.resume).exists():
         print(f"Resuming from {args.resume}")
-        model.load_weights(args.resume)
+        ckpt = torch.load(args.resume, map_location=device, weights_only=False)
+        model.load_state_dict(ckpt['model_state_dict'])
+        start_epoch = ckpt.get('epoch', 0) + 1
 
-    # Callbacks
-    callbacks = [
-        TrainingCheckpoint(args.save_path),
-        MetricsLogger("training_metrics.json"),
-        keras.callbacks.ReduceLROnPlateau(
-            monitor='loss', factor=0.5, patience=10, min_lr=1e-6
-        ),
-        keras.callbacks.EarlyStopping(
-            monitor='loss', patience=30, restore_best_weights=True
-        ),
-    ]
+    # ---- Optimizer ----
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, weight_decay=0.01, betas=(0.9, 0.98))
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs, eta_min=1e-5)
 
-    # Training
+    # ---- Training loop ----
     print(f"\n{'='*60}")
     print(f"Starting training for {args.epochs} epochs")
     print(f"Batch size: {args.batch_size}, LR: {args.learning_rate}")
-    print(f"Device: {strategy}")
+    print(f"Device: {device}")
     print(f"{'='*60}\n")
 
-    start_time = time.time()
-    history = model.fit(train_ds, epochs=args.epochs, callbacks=callbacks, verbose=1)
+    best_loss = float('inf')
+    Path(args.save_path).parent.mkdir(parents=True, exist_ok=True)
 
-    # Save final checkpoint
-    model.save_weights(args.save_path)
+    for epoch in range(start_epoch, args.epochs):
+        t0 = time.time()
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, scheduler, device)
+        scheduler.step()
+        elapsed = time.time() - t0
 
-    # Export for Go
-    if args.export_go:
-        export_for_go(model, config, vocab_data, args.save_path, args.export_go)
+        # Validation
+        val_str = ""
+        if val_loader:
+            val_loss = evaluate(model, val_loader, device)
+            val_str = f" | val_loss: {val_loss:.4f}"
 
-    total_time = time.time() - start_time
-    print(f"\n{'='*60}")
-    print(f"Training completed!")
-    print(f"Total time: {total_time:.1f}s ({total_time/60:.1f} minutes)")
-    print(f"Final loss: {history.history['loss'][-1]:.4f}")
-    print(f"{'='*60}")
+        # Logging
+        lr = optimizer.param_groups[0]['lr']
+        print(f"Epoch {epoch+1}/{args.epochs} | loss: {train_loss:.4f} | acc: {train_acc:.4f}{val_str} | lr: {lr:.2e} | {elapsed:.1f}s")
 
-    # Create completion marker
+        # Save best model
+        if train_loss < best_loss:
+            best_loss = train_loss
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': train_loss,
+                'config': config.to_dict(),
+            }, args.save_path.replace('.pt', '_best.pt'))
+            print(f"  New best loss: {train_loss:.4f}")
+
+        # Save checkpoint every 10 epochs
+        if (epoch + 1) % 10 == 0:
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': train_loss,
+                'config': config.to_dict(),
+            }, args.save_path)
+
+    # Save final model
+    torch.save({
+        'epoch': args.epochs,
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'loss': train_loss,
+        'config': config.to_dict(),
+    }, args.save_path)
+
+    # Completion marker
     completion_marker = Path(args.save_path).parent / "training_complete.txt"
     with open(completion_marker, 'w') as f:
-        f.write(f"Training completed at {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Total epochs: {args.epochs}\n")
-        f.write(f"Final loss: {history.history['loss'][-1]:.4f}\n")
-        f.write(f"Total time: {total_time:.1f}s\n")
+        f.write(f"Exported to ../config.trained.json at {time.strftime('%Y-%m-%dT%H:%M:%S')}\n")
 
-    print(f"Completion marker saved to: {completion_marker}")
+    print(f"\n{'='*60}")
+    print(f"Training completed!")
+    print(f"Best loss: {best_loss:.4f}")
+    print(f"{'='*60}")
 
 
 if __name__ == '__main__':
