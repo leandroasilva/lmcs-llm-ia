@@ -14,7 +14,6 @@ import (
 	"github.com/leandroasilva/lmcs-llm-ia/internal/config"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/middleware"
 	"github.com/leandroasilva/lmcs-llm-ia/internal/model"
-	"github.com/leandroasilva/lmcs-llm-ia/internal/training"
 )
 
 // spaHandler serves a Single Page Application from a directory,
@@ -117,11 +116,6 @@ func RunServe(configPath string) error {
 	mux := http.NewServeMux()
 	handler := api.NewHandler(transformerMdl)
 	handler.RegisterRoutes(mux)
-
-	// Registrar rotas de treinamento
-	trainingHandler := api.NewTrainingHandler(training.GlobalMetrics)
-	mux.HandleFunc("/api/training/status", trainingHandler.HandleTrainingStatus)          // SSE
-	mux.HandleFunc("/api/training/status/json", trainingHandler.HandleTrainingStatusJSON) // JSON
 
 	// Servir frontend React build (SPA fallback)
 	spaHandler := newSPAHandler("frontend/dist")

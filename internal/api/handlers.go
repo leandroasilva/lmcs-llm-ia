@@ -18,6 +18,7 @@ type AskRequest struct {
 	Question    string  `json:"question"`
 	Temperature float64 `json:"temperature"`
 	TopK        int     `json:"top_k"`
+	MaxTokens   int     `json:"max_tokens"`
 }
 
 // StreamResponse representa um chunk de resposta streaming
@@ -111,8 +112,11 @@ func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
 	if req.TopK <= 0 || req.TopK > 100 {
 		req.TopK = 30
 	}
+	if req.MaxTokens <= 0 || req.MaxTokens > 512 {
+		req.MaxTokens = 150
+	}
 
-	log.Printf("Recebida pergunta: %s (temp=%.2f, topk=%d)\n", req.Question, req.Temperature, req.TopK)
+	log.Printf("Recebida pergunta: %s (temp=%.2f, topk=%d, max_tokens=%d)\n", req.Question, req.Temperature, req.TopK, req.MaxTokens)
 
 	startTime := time.Now()
 
@@ -120,7 +124,7 @@ func (h *Handler) handleAsk(w http.ResponseWriter, r *http.Request) {
 	conversationalPrompt := fmt.Sprintf("Usuário: %s\nAssistente: ", req.Question)
 
 	// Gerar resposta usando KV cache para speedup
-	fullResponse := h.model.GenerateWithKVCache(conversationalPrompt, 150, req.Temperature, req.TopK)
+	fullResponse := h.model.GenerateWithKVCache(conversationalPrompt, req.MaxTokens, req.Temperature, req.TopK)
 
 	// Extrair apenas a resposta do assistente
 	answer := extractAssistantResponse(fullResponse)
@@ -173,40 +177,31 @@ func (h *Handler) handleAskStream(w http.ResponseWriter, r *http.Request) {
 	if req.TopK <= 0 || req.TopK > 100 {
 		req.TopK = 30
 	}
+	if req.MaxTokens <= 0 || req.MaxTokens > 512 {
+		req.MaxTokens = 150
+	}
 
-	log.Printf("[STREAM] Recebida pergunta: %s (temp=%.2f, topk=%d)\n", req.Question, req.Temperature, req.TopK)
+	log.Printf("[STREAM] Recebida pergunta: %s (temp=%.2f, topk=%d, max_tokens=%d)\n", req.Question, req.Temperature, req.TopK, req.MaxTokens)
 
 	startTime := time.Now()
 
-	// Tokenizar prompt
+	// Formatar prompt
 	conversationalPrompt := fmt.Sprintf("Usuário: %s\nAssistente: ", req.Question)
-	promptTokens := h.model.Tokenize(conversationalPrompt)
 
-	// Gerar token por token com beam search
-	generatedTokens := h.generateTokensStreaming(promptTokens, 150, req.Temperature)
-
-	// Enviar tokens via SSE
-	for _, tokenID := range generatedTokens {
-		if token, ok := h.model.IDToWord[tokenID]; ok {
-			if tokenID != h.model.SpecialTokens["<PAD>"] &&
-				tokenID != h.model.SpecialTokens["<BOS>"] &&
-				tokenID != h.model.SpecialTokens["<EOS>"] {
-				// Enviar token
-				data := StreamResponse{
-					Token: token + " ",
-					Done:  false,
-				}
-				if err := sendSSE(w, data); err != nil {
-					log.Printf("[STREAM] Erro ao enviar: %v\n", err)
-					return
-				}
-				flusher.Flush()
-
-				// Pequena pausa para simular digitação (opcional)
-				time.Sleep(30 * time.Millisecond)
-			}
+	// Gerar com streaming usando KV cache (mesma lógica do GenerateWithKVCache)
+	h.model.GenerateStream(conversationalPrompt, req.MaxTokens, req.Temperature, req.TopK, func(token string) bool {
+		data := StreamResponse{
+			Token: token,
+			Done:  false,
 		}
-	}
+		if err := sendSSE(w, data); err != nil {
+			log.Printf("[STREAM] Erro ao enviar: %v\n", err)
+			return false
+		}
+		flusher.Flush()
+		time.Sleep(30 * time.Millisecond)
+		return true
+	})
 
 	// Enviar sinal de done
 	elapsed := time.Since(startTime)
@@ -288,72 +283,4 @@ func sendSSEError(w http.ResponseWriter, message string) {
 		Done:  true,
 	}
 	sendSSE(w, data)
-}
-
-// generateTokensStreaming gera tokens um por um para streaming
-func (h *Handler) generateTokensStreaming(promptTokens []int, maxTokens int, temperature float64) []int {
-	var generated []int
-	currentTokens := make([]int, len(promptTokens))
-	copy(currentTokens, promptTokens)
-
-	// Penalidade de repetição
-	repetitionPenalty := 1.3
-
-	// Top-p nucleus sampling
-	topP := 0.9
-
-	for i := 0; i < maxTokens; i++ {
-		// Forward pass
-		output := h.model.Forward(currentTokens)
-
-		// Pegar última posição
-		seqLen := output.RawMatrix().Rows
-		lastRow := make([]float64, h.model.DModel)
-		for j := 0; j < h.model.DModel; j++ {
-			lastRow[j] = output.At(seqLen-1, j)
-		}
-
-		// Calcular logits
-		logits := make([]float64, h.model.VocabSize)
-		for v := 0; v < h.model.VocabSize; v++ {
-			logits[v] = h.model.BOut.At(v, 0)
-			for j := 0; j < h.model.DModel; j++ {
-				logits[v] += h.model.WOut.At(v, j) * lastRow[j]
-			}
-		}
-
-		// Aplicar penalidade de repetição aos logits
-		logits = model.ApplyRepetitionPenalty(logits, generated, repetitionPenalty)
-
-		// Aplicar top-p nucleus sampling
-		logits = model.ApplyTopPSampling(logits, topP)
-
-		// Aplicar temperatura aos logits antes do softmax
-		if temperature > 0 && temperature != 1.0 {
-			for i := range logits {
-				logits[i] /= temperature
-			}
-		}
-
-		// Aplicar softmax
-		probs := model.Softmax(logits)
-
-		// Sample token com top-k
-		nextToken := model.SampleTopK(probs, 30)
-
-		// Verificar se é token de fim
-		if nextToken == h.model.SpecialTokens["<EOS>"] {
-			break
-		}
-
-		generated = append(generated, nextToken)
-		currentTokens = append(currentTokens, nextToken)
-
-		// Limitar tamanho da sequência
-		if len(currentTokens) > h.model.MaxSeqLen {
-			currentTokens = currentTokens[1:]
-		}
-	}
-
-	return generated
 }

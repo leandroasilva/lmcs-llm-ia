@@ -182,39 +182,11 @@ func TestTransformerModel_Generate(t *testing.T) {
 	t.Logf("Generate: '%s' -> '%s' (pode ser vazio para modelo não treinado)", prompt, generated)
 }
 
-func TestTransformerModel_TrainAndEnableBPE(t *testing.T) {
-	model := NewTransformerModel(100, 128, 4, 2, 64, 256, 0.001, 0.1, 0.01)
-
-	corpus := "BPE training test transformer model with subwords"
-
-	// Treinar BPE
-	model.TrainAndEnableBPE(corpus, 50)
-
-	// Verificar se BPE foi habilitado
-	if !model.UseBPE {
-		t.Error("BPE não foi habilitado")
-	}
-	if model.BPETokenizer == nil {
-		t.Error("BPETokenizer é nil")
-	}
-
-	// Verificar tipo de tokenizer
-	tokenizerType := model.GetTokenizerType()
-	if tokenizerType != "BPE" {
-		t.Errorf("TokenizerType: expected 'BPE', got '%s'", tokenizerType)
-	}
-
-	t.Logf("BPE enabled: vocab_size=%d, type=%s", model.VocabSize, tokenizerType)
-}
-
 func TestTransformerModel_BPE_Tokenize(t *testing.T) {
 	model := NewTransformerModel(100, 128, 4, 2, 64, 256, 0.001, 0.1, 0.01)
 
-	corpus := "BPE tokenize test with subword tokenization"
-	model.TrainAndEnableBPE(corpus, 50)
-
-	// Tokenizar com BPE
-	text := "BPE tokenize test"
+	// BPE tokenizer não é mais treinado em Go - testar word-level fallback
+	text := "tokenize test"
 	tokens := model.Tokenize(text)
 
 	if len(tokens) == 0 {

@@ -292,8 +292,8 @@ func (decoder *GrammarConstrainedDecoder) generateWithGrammar(
 		}
 
 		// Softmax e sample
-		probs := softmax(logitValues)
-		nextToken := sampleFromDistribution(probs)
+		probs := Softmax(logitValues)
+		nextToken := Sample(probs)
 
 		tokens = append(tokens, nextToken)
 

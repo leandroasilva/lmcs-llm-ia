@@ -308,6 +308,85 @@ func feedForwardIncremental(layer *TransformerLayer, X *mat.Dense, dModel int) *
 	return output
 }
 
+// GenerateStream gera texto com streaming via callback.
+// O callback onToken recebe cada token gerado; retornar false para parar.
+// Retorna o texto completo gerado.
+func (m *TransformerModel) GenerateStream(prompt string, maxTokens int, temperature float64, topK int, onToken func(token string) bool) string {
+	// Tokenizar prompt
+	promptTokens := m.Tokenize(prompt)
+
+	// Criar KV cache
+	headDim := m.DModel / m.NHeads
+	cache := NewKVCache(m.NLayers, m.NHeads, headDim, m.MaxSeqLen)
+
+	// Penalidade de repetição e top-p
+	repetitionPenalty := 1.3
+	topP := 0.9
+
+	var generatedTokens []int
+	currentTokens := make([]int, len(promptTokens))
+	copy(currentTokens, promptTokens)
+
+	for i := 0; i < maxTokens; i++ {
+		var lastHidden []float64
+
+		if i == 0 {
+			for pos := 0; pos < len(currentTokens); pos++ {
+				lastHidden = m.IncrementalForward(currentTokens[pos], cache, pos)
+			}
+		} else {
+			lastToken := currentTokens[len(currentTokens)-1]
+			position := len(currentTokens) - 1
+			lastHidden = m.IncrementalForward(lastToken, cache, position)
+		}
+
+		// Calcular logits
+		logits := make([]float64, m.VocabSize)
+		for v := 0; v < m.VocabSize; v++ {
+			logits[v] = m.BOut.At(v, 0)
+			for j := 0; j < m.DModel; j++ {
+				logits[v] += m.WOut.At(v, j) * lastHidden[j]
+			}
+		}
+
+		logits = ApplyRepetitionPenalty(logits, generatedTokens, repetitionPenalty)
+		logits = ApplyTopPSampling(logits, topP)
+
+		if temperature > 0 && temperature != 1.0 {
+			for j := range logits {
+				logits[j] /= temperature
+			}
+		}
+
+		probs := Softmax(logits)
+		nextToken := SampleTopK(probs, topK)
+
+		if nextToken == m.SpecialTokens["<EOS>"] {
+			break
+		}
+
+		generatedTokens = append(generatedTokens, nextToken)
+		currentTokens = append(currentTokens, nextToken)
+
+		if len(currentTokens) > m.MaxSeqLen {
+			currentTokens = currentTokens[1:]
+		}
+
+		// Emitir token via callback
+		if onToken != nil {
+			if token, ok := m.IDToWord[nextToken]; ok {
+				if nextToken != m.SpecialTokens["<PAD>"] && nextToken != m.SpecialTokens["<BOS>"] {
+					if !onToken(token + " ") {
+						break
+					}
+				}
+			}
+		}
+	}
+
+	return m.Detokenize(generatedTokens)
+}
+
 // GenerateWithKVCache gera texto usando KV cache para speedup
 func (m *TransformerModel) GenerateWithKVCache(prompt string, maxTokens int, temperature float64, topK int) string {
 	// Tokenizar prompt

@@ -47,10 +47,6 @@ type TransformerModel struct {
 	GradWOut  *mat.Dense // Gradientes
 	GradBOut  *mat.Dense // Gradientes
 
-	// Multi-Token Prediction (MTP)
-	MTPHead *MTPHead // Cabeça de predição multi-token
-	UseMTP  bool     // Flag para usar MTP
-
 	// Tokenizer
 	Vocab         []string       // Vocabulary (word-level)
 	WordToID      map[string]int // Word to ID mapping
@@ -73,10 +69,6 @@ type TransformerLayer struct {
 	B1 *mat.Dense // [ff_hidden, 1]
 	W2 *mat.Dense // [d_model, ff_hidden]
 	B2 *mat.Dense // [d_model, 1]
-
-	// MoE (opcional, substitui FFN denso se não nil)
-	MoELayer *MoELayer // Mixture of Experts
-	UseMoE   bool      // Flag para usar MoE ao invés de FFN denso
 
 	// Layer normalization
 	LN1Weight, LN1Bias *mat.Dense // [d_model, 1]
@@ -218,50 +210,6 @@ func (model *TransformerModel) BackendInfo() compute.DeviceInfo {
 	return model.Backend.Info()
 }
 
-// EnableMoEForLayer habilita MoE para uma camada específica
-func (model *TransformerModel) EnableMoEForLayer(layerIdx int, moeConfig *MoEConfig) {
-	if layerIdx < 0 || layerIdx >= len(model.TransformerLayers) {
-		return
-	}
-
-	layer := &model.TransformerLayers[layerIdx]
-	layer.MoELayer = NewMoELayer(moeConfig)
-	layer.UseMoE = true
-}
-
-// EnableMoEForAllLayers habilita MoE para todas as camadas
-func (model *TransformerModel) EnableMoEForAllLayers(numExperts, topK int) {
-	moeConfig := NewMoEConfig(model.DModel, numExperts, topK, model.FFHidden)
-
-	for i := range model.TransformerLayers {
-		model.EnableMoEForLayer(i, moeConfig)
-	}
-}
-
-// EnableMTP habilita Multi-Token Prediction
-func (model *TransformerModel) EnableMTP(numPredictions int, weightMTP float64) {
-	mtpConfig := NewMTPConfig(numPredictions, model.VocabSize, model.DModel)
-	mtpConfig.WeightMTP = weightMTP
-	model.MTPHead = NewMTPHead(mtpConfig)
-	model.UseMTP = true
-}
-
-// ForwardWithMTP faz forward pass com MTP
-// Returns: hidden state, MTP logits, MTP loss
-func (model *TransformerModel) ForwardWithMTP(inputTokens []int, targets [][]int) (*mat.Dense, []*mat.Dense, float64) {
-	// Forward pass normal
-	hidden := model.Forward(inputTokens)
-	seqLen := len(inputTokens)
-
-	// Se MTP está habilitado, calcular MTP loss
-	if model.UseMTP && model.MTPHead != nil && targets != nil {
-		_, logits, mtpLoss := MTPForward(model.MTPHead, hidden, targets, seqLen)
-		return hidden, logits, mtpLoss
-	}
-
-	return hidden, nil, 0.0
-}
-
 // BuildVocabTransformer constrói vocabulário word-level a partir do texto
 func BuildVocabTransformer(text string, maxVocab int) ([]string, map[string]int, map[int]string) {
 	// Tokenização simples por espaço
@@ -368,22 +316,6 @@ func (m *TransformerModel) Detokenize(tokens []int) string {
 		}
 	}
 	return strings.Join(words, " ")
-}
-
-// TrainAndEnableBPE treina BPE e habilita no modelo
-func (m *TransformerModel) TrainAndEnableBPE(corpus string, vocabSize int) {
-	// Criar e treinar BPE tokenizer
-	bpe := tokenizer.NewBPETokenizer()
-	bpe.Train(corpus, vocabSize)
-
-	// Configurar no modelo
-	m.BPETokenizer = bpe
-	m.UseBPE = true
-	m.VocabSize = bpe.GetVocabSize()
-
-	// Recriar embeddings para novo vocabulário
-	scale := math.Sqrt(2.0 / float64(m.DModel))
-	m.TokenEmbedding = transformerRandomMatrix(m.VocabSize, m.DModel, scale)
 }
 
 // GetTokenizerType retorna o tipo de tokenizador ativo
@@ -621,74 +553,12 @@ func LoadTransformerModel(path string) (*TransformerModel, error) {
 		return nil, err
 	}
 
-	// Inicializar gradientes se não existirem (para modelos antigos)
-	model.initGradientsIfMissing()
-
 	return &model, nil
 }
 
 // LoadTrainedModelFromJSON carrega modelo treinado exportado em JSON
 func LoadTrainedModelFromJSON(path string) (*TransformerModel, error) {
-	// Implementation will be added in a separate file to avoid complexity
 	return loadTrainedModelFromJSON(path)
-}
-
-// initGradientsIfMissing inicializa gradientes para modelos antigos
-func (m *TransformerModel) initGradientsIfMissing() {
-	// Inicializar gradientes do modelo
-	if m.GradTokenEmbedding == nil {
-		m.GradTokenEmbedding = mat.NewDense(m.VocabSize, m.DModel, nil)
-	}
-	if m.GradPositionEmbedding == nil {
-		m.GradPositionEmbedding = mat.NewDense(m.MaxSeqLen, m.DModel, nil)
-	}
-	if m.GradWOut == nil {
-		m.GradWOut = mat.NewDense(m.VocabSize, m.DModel, nil)
-	}
-	if m.GradBOut == nil {
-		m.GradBOut = mat.NewDense(m.VocabSize, 1, nil)
-	}
-
-	// Inicializar gradientes das layers
-	for i := 0; i < m.NLayers; i++ {
-		layer := &m.TransformerLayers[i]
-		if layer.GradWQ == nil {
-			layer.GradWQ = mat.NewDense(m.DModel, m.DModel, nil)
-		}
-		if layer.GradWK == nil {
-			layer.GradWK = mat.NewDense(m.DModel, m.DModel, nil)
-		}
-		if layer.GradWV == nil {
-			layer.GradWV = mat.NewDense(m.DModel, m.DModel, nil)
-		}
-		if layer.GradWO == nil {
-			layer.GradWO = mat.NewDense(m.DModel, m.DModel, nil)
-		}
-		if layer.GradW1 == nil {
-			layer.GradW1 = mat.NewDense(m.FFHidden, m.DModel, nil)
-		}
-		if layer.GradB1 == nil {
-			layer.GradB1 = mat.NewDense(m.FFHidden, 1, nil)
-		}
-		if layer.GradW2 == nil {
-			layer.GradW2 = mat.NewDense(m.DModel, m.FFHidden, nil)
-		}
-		if layer.GradB2 == nil {
-			layer.GradB2 = mat.NewDense(m.DModel, 1, nil)
-		}
-		if layer.GradLN1Weight == nil {
-			layer.GradLN1Weight = mat.NewDense(m.DModel, 1, nil)
-		}
-		if layer.GradLN1Bias == nil {
-			layer.GradLN1Bias = mat.NewDense(m.DModel, 1, nil)
-		}
-		if layer.GradLN2Weight == nil {
-			layer.GradLN2Weight = mat.NewDense(m.DModel, 1, nil)
-		}
-		if layer.GradLN2Bias == nil {
-			layer.GradLN2Bias = mat.NewDense(m.DModel, 1, nil)
-		}
-	}
 }
 
 // transformerRandomMatrix cria uma matriz com valores aleatórios
@@ -959,23 +829,9 @@ func multiHeadAttention(layer *TransformerLayer, X *mat.Dense, seqLen, dModel, n
 	return result
 }
 
-// feedForward implementa FFN (denso ou MoE)
+// feedForward implementa FFN denso
 func feedForward(layer *TransformerLayer, X *mat.Dense, seqLen, dModel int) *mat.Dense {
-	// Se MoE está habilitado, usar MoE ao invés de FFN denso
-	if layer.UseMoE && layer.MoELayer != nil {
-		output, _ := MixtureOfExperts(layer.MoELayer, X, seqLen)
-
-		// Residual connection
-		for i := 0; i < seqLen; i++ {
-			for j := 0; j < dModel; j++ {
-				output.Set(i, j, output.At(i, j)+X.At(i, j))
-			}
-		}
-
-		return output
-	}
-
-	// FFN denso (implementação original)
+	// FFN denso
 	// X * W1^T + B1
 	hidden := mat.NewDense(seqLen, layer.W1.RawMatrix().Rows, nil)
 	hidden.Mul(X, layer.W1.T())
@@ -1129,261 +985,4 @@ func transformerSoftmax(logits []float64) []float64 {
 		probs[i] /= sum
 	}
 	return probs
-}
-
-// BackwardPropagation implementa backpropagation completa
-func (m *TransformerModel) BackwardPropagation(inputTokens []int, targetToken int, output *mat.Dense, lr float64) float64 {
-	seqLen := len(inputTokens)
-	if seqLen > m.MaxSeqLen {
-		seqLen = m.MaxSeqLen
-	}
-
-	// Calcular logits da última posição
-	lastRow := make([]float64, m.DModel)
-	for j := 0; j < m.DModel; j++ {
-		lastRow[j] = output.At(seqLen-1, j)
-	}
-
-	// Calcular logits
-	logits := make([]float64, m.VocabSize)
-	for v := 0; v < m.VocabSize; v++ {
-		logits[v] = m.BOut.At(v, 0)
-		for j := 0; j < m.DModel; j++ {
-			logits[v] += m.WOut.At(v, j) * lastRow[j]
-		}
-	}
-
-	// Softmax e cross-entropy
-	probs := transformerSoftmax(logits)
-	loss := -math.Log(probs[targetToken] + 1e-10)
-
-	// Gradiente do loss em relação aos logits
-	dLogits := make([]float64, m.VocabSize)
-	for v := 0; v < m.VocabSize; v++ {
-		dLogits[v] = probs[v]
-		if v == targetToken {
-			dLogits[v] -= 1.0
-		}
-	}
-
-	// Gradientes para WOut e BOut
-	for v := 0; v < m.VocabSize; v++ {
-		for j := 0; j < m.DModel; j++ {
-			m.GradWOut.Set(v, j, dLogits[v]*lastRow[j])
-		}
-		m.GradBOut.Set(v, 0, dLogits[v])
-	}
-
-	// Gradiente em relação ao lastRow (dX)
-	dX := make([]float64, m.DModel)
-	for j := 0; j < m.DModel; j++ {
-		for v := 0; v < m.VocabSize; v++ {
-			dX[j] += m.WOut.At(v, j) * dLogits[v]
-		}
-	}
-
-	// Backpropagation através das transformer layers (reversed)
-	for i := m.NLayers - 1; i >= 0; i-- {
-		dX = backwardTransformerLayer(&m.TransformerLayers[i], dX, seqLen, m.DModel, m.NHeads, lr)
-	}
-
-	// Gradientes para embeddings
-	for i, tokenID := range inputTokens {
-		if i >= seqLen {
-			break
-		}
-		for j := 0; j < m.DModel; j++ {
-			m.GradTokenEmbedding.Set(tokenID, j, m.GradTokenEmbedding.At(tokenID, j)+dX[j])
-			m.GradPositionEmbedding.Set(i, j, dX[j])
-		}
-	}
-
-	// Atualizar pesos com gradient clipping
-	clipValue := 5.0
-	m.updateWeights(lr, clipValue)
-
-	return loss
-}
-
-// backwardTransformerLayer faz backpropagation de uma camada
-func backwardTransformerLayer(layer *TransformerLayer, dX []float64, seqLen, dModel, nHeads int, lr float64) []float64 {
-	// Simplified: apenas propaga gradientes através da camada
-	// Em implementação completa, seria necessário guardar ativações do forward pass
-	dOut := make([]float64, len(dX))
-	copy(dOut, dX)
-
-	// Backprop através do feed-forward
-	dOut = backwardFeedForward(layer, dOut, seqLen, dModel, lr)
-
-	// Backprop através da attention
-	dOut = backwardAttention(layer, dOut, seqLen, dModel, nHeads, lr)
-
-	return dOut
-}
-
-// backwardFeedForward faz backprop do feed-forward network
-func backwardFeedForward(layer *TransformerLayer, dOut []float64, seqLen, dModel int, lr float64) []float64 {
-	dIn := make([]float64, len(dOut))
-	copy(dIn, dOut)
-
-	// Gradientes para W2 e B2 (última camada do FF)
-	for i := 0; i < seqLen && i < len(dIn)/dModel; i++ {
-		for j := 0; j < dModel; j++ {
-			grad := dIn[i*dModel+j]
-			// Clip gradient
-			if grad > 5.0 {
-				grad = 5.0
-			} else if grad < -5.0 {
-				grad = -5.0
-			}
-
-			// Update W2 e B2
-			for k := 0; k < layer.W2.RawMatrix().Cols; k++ {
-				oldVal := layer.W2.At(j, k)
-				layer.W2.Set(j, k, oldVal-lr*grad*0.1)
-			}
-			layer.B2.Set(j, 0, layer.B2.At(j, 0)-lr*grad*0.1)
-		}
-	}
-
-	return dIn
-}
-
-// backwardAttention faz backprop da attention
-func backwardAttention(layer *TransformerLayer, dOut []float64, seqLen, dModel, nHeads int, lr float64) []float64 {
-	dIn := make([]float64, len(dOut))
-	copy(dIn, dOut)
-
-	// Gradientes simplificados para WQ, WK, WV, WO
-	for i := 0; i < dModel; i++ {
-		for j := 0; j < dModel; j++ {
-			grad := dIn[i*dModel%dModel] * 0.01 // Gradiente aproximado
-
-			// Clip
-			if grad > 1.0 {
-				grad = 1.0
-			} else if grad < -1.0 {
-				grad = -1.0
-			}
-
-			// Update weights
-			layer.WQ.Set(i, j, layer.WQ.At(i, j)-lr*grad)
-			layer.WK.Set(i, j, layer.WK.At(i, j)-lr*grad)
-			layer.WV.Set(i, j, layer.WV.At(i, j)-lr*grad)
-			layer.WO.Set(i, j, layer.WO.At(i, j)-lr*grad)
-		}
-	}
-
-	return dIn
-}
-
-// updateWeights atualiza todos os pesos do modelo
-func (m *TransformerModel) updateWeights(lr float64, clipValue float64) {
-	// Atualizar WOut e BOut
-	for v := 0; v < m.VocabSize; v++ {
-		for j := 0; j < m.DModel; j++ {
-			grad := m.GradWOut.At(v, j)
-			// Gradient clipping
-			if grad > clipValue {
-				grad = clipValue
-			} else if grad < -clipValue {
-				grad = -clipValue
-			}
-			// Apply weight decay (L2 regularization)
-			weight := m.WOut.At(v, j)
-			m.WOut.Set(v, j, weight-lr*(grad+m.WeightDecay*weight))
-		}
-		grad := m.GradBOut.At(v, 0)
-		if grad > clipValue {
-			grad = clipValue
-		} else if grad < -clipValue {
-			grad = -clipValue
-		}
-		m.BOut.Set(v, 0, m.BOut.At(v, 0)-lr*grad)
-	}
-
-	// Atualizar embeddings
-	for v := 0; v < m.VocabSize; v++ {
-		for j := 0; j < m.DModel; j++ {
-			grad := m.GradTokenEmbedding.At(v, j)
-			if grad > clipValue {
-				grad = clipValue
-			} else if grad < -clipValue {
-				grad = -clipValue
-			}
-			weight := m.TokenEmbedding.At(v, j)
-			m.TokenEmbedding.Set(v, j, weight-lr*(grad*0.1+m.WeightDecay*weight))
-		}
-	}
-
-	// Atualizar layers
-	for i := 0; i < m.NLayers; i++ {
-		layer := &m.TransformerLayers[i]
-
-		// Attention weights (com verificação de bounds)
-		for r := 0; r < layer.WQ.RawMatrix().Rows; r++ {
-			for c := 0; c < layer.WQ.RawMatrix().Cols; c++ {
-				// Verificar se os gradientes existem e têm tamanho correto
-				if layer.GradWQ != nil && r < layer.GradWQ.RawMatrix().Rows && c < layer.GradWQ.RawMatrix().Cols {
-					weight := layer.WQ.At(r, c)
-					layer.WQ.Set(r, c, weight-lr*(layer.GradWQ.At(r, c)*0.1+m.WeightDecay*weight))
-				}
-				if layer.GradWK != nil && r < layer.GradWK.RawMatrix().Rows && c < layer.GradWK.RawMatrix().Cols {
-					weight := layer.WK.At(r, c)
-					layer.WK.Set(r, c, weight-lr*(layer.GradWK.At(r, c)*0.1+m.WeightDecay*weight))
-				}
-				if layer.GradWV != nil && r < layer.GradWV.RawMatrix().Rows && c < layer.GradWV.RawMatrix().Cols {
-					weight := layer.WV.At(r, c)
-					layer.WV.Set(r, c, weight-lr*(layer.GradWV.At(r, c)*0.1+m.WeightDecay*weight))
-				}
-				if layer.GradWO != nil && r < layer.GradWO.RawMatrix().Rows && c < layer.GradWO.RawMatrix().Cols {
-					weight := layer.WO.At(r, c)
-					layer.WO.Set(r, c, weight-lr*(layer.GradWO.At(r, c)*0.1+m.WeightDecay*weight))
-				}
-			}
-		}
-
-		// Feed-forward weights (com verificação de bounds)
-		if layer.W1 != nil && layer.W2 != nil {
-			for r := 0; r < layer.W1.RawMatrix().Rows; r++ {
-				for c := 0; c < layer.W1.RawMatrix().Cols; c++ {
-					if layer.GradW1 != nil && r < layer.GradW1.RawMatrix().Rows && c < layer.GradW1.RawMatrix().Cols {
-						weight := layer.W1.At(r, c)
-						layer.W1.Set(r, c, weight-lr*(layer.GradW1.At(r, c)*0.1+m.WeightDecay*weight))
-					}
-					if layer.GradW2 != nil && r < layer.GradW2.RawMatrix().Rows && c < layer.GradW2.RawMatrix().Cols {
-						weight := layer.W2.At(r, c)
-						layer.W2.Set(r, c, weight-lr*(layer.GradW2.At(r, c)*0.1+m.WeightDecay*weight))
-					}
-				}
-			}
-		}
-	}
-
-	// Limpar gradientes para próxima iteração
-	m.clearGradients()
-}
-
-// clearGradients zera todos os gradientes
-func (m *TransformerModel) clearGradients() {
-	m.GradTokenEmbedding.Zero()
-	m.GradPositionEmbedding.Zero()
-	m.GradWOut.Zero()
-	m.GradBOut.Zero()
-
-	for i := 0; i < m.NLayers; i++ {
-		layer := &m.TransformerLayers[i]
-		layer.GradWQ.Zero()
-		layer.GradWK.Zero()
-		layer.GradWV.Zero()
-		layer.GradWO.Zero()
-		layer.GradW1.Zero()
-		layer.GradB1.Zero()
-		layer.GradW2.Zero()
-		layer.GradB2.Zero()
-		layer.GradLN1Weight.Zero()
-		layer.GradLN1Bias.Zero()
-		layer.GradLN2Weight.Zero()
-		layer.GradLN2Bias.Zero()
-	}
 }
