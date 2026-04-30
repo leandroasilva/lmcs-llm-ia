@@ -95,3 +95,4 @@ training_gpu/data/*
 #frontend
 .npm-cache
 node_modules/
+training_gpu/vocab_trained.json

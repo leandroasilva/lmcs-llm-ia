@@ -15,11 +15,21 @@ type responseWriterWrapper struct {
 }
 
 func (w *responseWriterWrapper) WriteHeader(code int) {
+	defer func() {
+		if recover() != nil {
+			// Cliente desconectou; ignorar panic no WriteHeader
+		}
+	}()
 	w.written = true
 	w.ResponseWriter.WriteHeader(code)
 }
 
 func (w *responseWriterWrapper) Write(b []byte) (int, error) {
+	defer func() {
+		if recover() != nil {
+			// Cliente desconectou; ignorar panic no Write
+		}
+	}()
 	w.written = true
 	return w.ResponseWriter.Write(b)
 }
@@ -30,6 +40,11 @@ func (w *responseWriterWrapper) Written() bool {
 
 // Flush implements http.Flusher to support SSE streaming
 func (w *responseWriterWrapper) Flush() {
+	defer func() {
+		if recover() != nil {
+			// Cliente desconectou; ignorar panic no flush
+		}
+	}()
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}

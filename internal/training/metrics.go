@@ -121,11 +121,11 @@ func (tm *TrainingMetrics) EndTraining() {
 }
 
 // GetSnapshot retorna uma cópia snapshot das métricas
-func (tm *TrainingMetrics) GetSnapshot() TrainingMetrics {
+func (tm *TrainingMetrics) GetSnapshot() *TrainingMetrics {
 	tm.mu.RLock()
 	defer tm.mu.RUnlock()
 
-	return TrainingMetrics{
+	return &TrainingMetrics{
 		IsTraining:         tm.IsTraining,
 		StartTime:          tm.StartTime,
 		CurrentEpoch:       tm.CurrentEpoch,
